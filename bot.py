@@ -8,175 +8,260 @@ INTERVAL = 0
 
 data_store = {}
 tasks_store = {}
+coingecko_cache = {}
 
-def get_prices(symbol):
-    prices = {}
-    symbol_usdt = f"{symbol.upper()}USDT"
+def get_coingecko_id(symbol):
+    """Знаходить CoinGecko ID для будь-якого токена"""
+    symbol_lower = symbol.lower()
+    if symbol_lower in coingecko_cache:
+        return coingecko_cache[symbol_lower]
     
-    r = requests.get(f"https://fapi.binance.com/fapi/v1/ticker/price?symbol={symbol_usdt}", timeout=3)
     try:
-        prices["BINANCE"] = float(r.json()["price"])
+        r = requests.get("https://api.coingecko.com/api/v3/coins/list", timeout=5)
+        coins = r.json()
+        for coin in coins:
+            if coin["symbol"] == symbol_lower or coin["id"] == symbol_lower:
+                coingecko_cache[symbol_lower] = coin["id"]
+                return coin["id"]
     except:
         pass
-    
-    r = requests.get(f"https://api.mexc.com/api/v3/ticker/price?symbol={symbol_usdt}", timeout=3)
-    try:
-        prices["MEXC"] = float(r.json()["price"])
-    except:
-        pass
-    
-    return prices
+    return None
 
-async def start_monitor(update: Update, context: ContextTypes.DEFAULT_TYPE):
+def get_token_exchanges(token_id):
+    """Отримує ціни з топ бірж CoinGecko"""
+    try:
+        url = f"https://api.coingecko.com/api/v3/coins/{token_id}/tickers?page=1"
+        r = requests.get(url, timeout=10)
+        data = r.json()
+        return data.get("tickers", [])
+    except:
+        return []
+
+async def test_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """ /test btc - показує ВСІ біржі + найкращий спред"""
+    if not context.args:
+        await update.message.reply_text("Використай: /test btc або /test sol")
+        return
+    
+    symbol = context.args[0]
+    token_id = get_coingecko_id(symbol)
+    
+    if not token_id:
+        await update.message.reply_text(f"❌ Токен {symbol} не знайдено. Спробуй btc, eth, sol")
+        return
+    
+    tickers = get_token_exchanges(token_id)
+    
+    if not tickers:
+        await update.message.reply_text(f"❌ Немає даних для {symbol}")
+        return
+    
+    # Збираємо ціни з бірж
+    exchange_prices = {}
+    for ticker in tickers[:30]:  # Топ 30 бірж
+        ex_name = ticker["market"]["name"]
+        price = ticker["converted_last"]["usd"]
+        if price and ex_name:
+            exchange_prices[ex_name] = price
+    
+    if len(exchange_prices) < 2:
+        await update.message.reply_text("❌ Мало бірж з цінами")
+        return
+    
+    # Найкращий спред
+    sorted_exchanges = sorted(exchange_prices.items(), key=lambda x: x[1])
+    min_ex, min_price = sorted_exchanges[0]
+    max_ex, max_price = sorted_exchanges[-1]
+    spread_pct = (max_price - min_price) / min_price * 100
+    
+    text = f"🔥 {symbol.upper()} - ТОП СПРЕД\n\n"
+    
+    # Топ 10 найдешевші
+    text += "🟢 НАЙДешевші (КУПИТИ):\n"
+    for i, (ex, p) in enumerate(sorted_exchanges[:10], 1):
+        text += f"{i}. {ex:<12}: ${p:,.6f}\n"
+    
+    text += f"\n🔴 НАЙДорожчі (ПРОДАТИ):\n"
+    top_expensive = sorted_exchanges[-10:]
+    for i, (ex, p) in enumerate(reversed(top_expensive), 1):
+        text += f"{i}. {ex:<12}: ${p:,.6f}\n"
+    
+    text += f"\n🎯 НАЙКРАЩИЙ СПРЕД:\n"
+    text += f"🟢 Купити {min_ex}: ${min_price:,.6f}\n"
+    text += f"🔴 Продати {max_ex}: ${max_price:,.6f}\n"
+    text += f"📊 Спред: {spread_pct:.3f}%\n\n"
+    text += f"💎 Запустити моніторинг?\n/start {symbol}"
+    
+    await update.message.reply_text(text)
+
+async def setup_trade(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Налаштування торгівлі"""
     parts = update.message.text.split()
     if len(parts) < 4:
         await update.message.reply_text("87000 87200 0.1 BTC")
         return ConversationHandler.END
     
     try:
-        entry1 = float(parts[0])
-        entry2 = float(parts[1])
+        entry_low = float(parts[0])
+        entry_high = float(parts[1])
         amount = float(parts[2])
-        symbol = parts[3].upper()
+        symbol = parts[3].lower()
         
-        prices = get_prices(symbol)
+        uid = update.effective_user.id
+        data_store[uid] = {
+            "entry_low": entry_low,
+            "entry_high": entry_high,
+            "amount": amount,
+            "symbol": symbol
+        }
         
-        text = f"{symbol}\n\n"
-        text += f"Вхід: ${entry1} → ${entry2}\n"
-        text += f"{amount} шт\n\n"
-        
-        min_p = 999999
-        max_p = 0
-        min_ex = ""
-        max_ex = ""
-        
-        for ex, p in prices.items():
-            text += f"{ex}: ${p}\n"
-            if p < min_p:
-                min_p = p
-                min_ex = ex
-            if p > max_p:
-                max_p = p
-                max_ex = ex
-        
-        spread = (max_p - min_p) / min_p * 100
-        pnl = amount * (max_p - min_p)
-        
-        text += f"\nСпред {min_ex}-{max_ex}: {spread:.2f}%"
-        text += f"\nPnL: ${pnl:.2f}\n\nХвилини:"
-        
-        context.user_data["entry1"] = entry1
-        context.user_data["entry2"] = entry2
-        context.user_data["amount"] = amount
-        context.user_data["symbol"] = symbol
-        
-        await update.message.reply_text(text)
-        return INTERVAL
+        await update.message.reply_text(
+            f"✅ {symbol.upper()} НАЛАШТОВАНО!\n\n"
+            f"🟢 Вхід низька: ${entry_low}\n"
+            f"🔴 Вхід висока: ${entry_high}\n"
+            f"💰 Кількість: {amount}\n\n"
+            f"📊 /test {symbol} - перевірити спред\n"
+            f"⏰ /monitor 5 - моніторинг 5 хв"
+        )
+        return ConversationHandler.END
         
     except:
         await update.message.reply_text("87000 87200 0.1 BTC")
         return ConversationHandler.END
 
-async def set_interval(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    mins = int(update.message.text)
+async def start_monitor(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Запуск моніторингу"""
     uid = update.effective_user.id
-    data = context.user_data.copy()
-    data["interval"] = mins * 60
     
-    data_store[uid] = data
+    if uid not in data_store:
+        await update.message.reply_text("Спочатку налаштуй торгівлю:\n87000 87200 0.1 BTC")
+        return
     
-    if uid in tasks_store:
-        tasks_store[uid].cancel()
-    
-    app = context.application
-    task = asyncio.create_task(run_monitor(uid, app))
-    tasks_store[uid] = task
-    
-    await update.message.reply_text(f"{data['symbol']} {mins}хв запущено!")
-    return ConversationHandler.END
+    try:
+        minutes = int(context.args[0]) if context.args else 5
+        data = data_store[uid].copy()
+        data["interval"] = minutes * 60
+        
+        if uid in tasks_store:
+            tasks_store[uid].cancel()
+        
+        app = context.application
+        task = asyncio.create_task(monitor_loop(uid, app))
+        tasks_store[uid] = task
+        
+        await update.message.reply_text(
+            f"🚀 МОНІТОРИНГ {data['symbol'].upper()}\n"
+            f"⏰ Кожні {minutes} хв\n"
+            f"📱 /status /stop"
+        )
+    except:
+        await update.message.reply_text("Використай: /monitor 5")
 
-async def run_monitor(uid, app):
-    data = data_store.get(uid)
+async def monitor_loop(uid, app):
+    """Головний цикл моніторингу"""
+    data = data_store[uid]
     while uid in tasks_store:
         try:
-            prices = get_prices(data["symbol"])
+            token_id = get_coingecko_id(data["symbol"])
+            if token_id:
+                tickers = get_token_exchanges(token_id)
+                exchange_prices = {}
+                
+                for ticker in tickers[:20]:
+                    ex_name = ticker["market"]["name"]
+                    price = ticker["converted_last"]["usd"]
+                    if price and ex_name:
+                        exchange_prices[ex_name] = price
+                
+                if len(exchange_prices) >= 2:
+                    sorted_prices = sorted(exchange_prices.items(), key=lambda x: x[1])
+                    min_ex, min_p = sorted_prices[0]
+                    max_ex, max_p = sorted_prices[-1]
+                    
+                    spread = (max_p - min_p) / min_p * 100
+                    pnl = data["amount"] * (max_p - min_p)
+                    
+                    text = f"📊 {data['symbol'].upper()} LIVE\n\n"
+                    text += "ТОП 5 СПРЕД:\n"
+                    for ex, p in sorted_prices[:5]:
+                        text += f"{ex:<12}: ${p:,.6f}\n"
+                    
+                    text += f"\n🎯 АКТУАЛЬНИЙ СПРЕД:\n"
+                    text += f"🟢 {min_ex}: ${min_p:,.6f}\n"
+                    text += f"🔴 {max_ex}: ${max_p:,.6f}\n"
+                    text += f"📈 {spread:.3f}% | 💵 ${pnl:,.2f}"
+                    
+                    await app.bot.send_message(uid, text)
             
-            text = f"{data['symbol']} LIVE\n\n"
-            min_p = 999999
-            max_p = 0
-            min_ex = ""
-            max_ex = ""
-            
-            for ex, p in prices.items():
-                text += f"{ex}: ${p}\n"
-                if p < min_p:
-                    min_p = p
-                    min_ex = ex
-                if p > max_p:
-                    max_p = p
-                    max_ex = ex
-            
-            pnl = data["amount"] * (max_p - min_p)
-            text += f"\nСпред {min_ex}-{max_ex}: ${max_p-min_p}"
-            text += f"\nPnL: ${pnl:.2f}"
-            
-            await app.bot.send_message(uid, text)
             await asyncio.sleep(data["interval"])
+        except asyncio.CancelledError:
+            break
         except:
             await asyncio.sleep(60)
+
+async def status_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    uid = update.effective_user.id
+    if uid not in data_store:
+        await update.message.reply_text("Нічого налаштовано\n87000 87200 0.1 BTC")
+        return
+    
+    data = data_store[uid]
+    token_id = get_coingecko_id(data["symbol"])
+    
+    if token_id:
+        tickers = get_token_exchanges(token_id)
+        exchange_prices = {}
+        
+        for ticker in tickers[:15]:
+            ex_name = ticker["market"]["name"]
+            price = ticker["converted_last"]["usd"]
+            if price and ex_name:
+                exchange_prices[ex_name] = price
+        
+        if exchange_prices:
+            sorted_prices = sorted(exchange_prices.items(), key=lambda x: x[1])
+            min_ex, min_p = sorted_prices[0]
+            max_ex, max_p = sorted_prices[-1]
+            pnl = data["amount"] * (max_p - min_p)
+            
+            text = f"📋 {data['symbol'].upper()} STATUS\n\n"
+            for ex, p in sorted_prices[:10]:
+                text += f"{ex:<12}: ${p:,.6f}\n"
+            
+            text += f"\nPnL: ${pnl:,.2f}"
+            await update.message.reply_text(text)
+        else:
+            await update.message.reply_text("Ціни недоступні")
+    else:
+        await update.message.reply_text("Токен не знайдено")
 
 async def stop_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
     if uid in tasks_store:
         tasks_store[uid].cancel()
-        data_store.pop(uid, None)
-        await update.message.reply_text("Зупинено")
+        tasks_store.pop(uid, None)
+        await update.message.reply_text("🛑 ЗУПИНЕНО")
     else:
         await update.message.reply_text("Не запущено")
-
-async def status_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    uid = update.effective_user.id
-    if uid not in data_store:
-        await update.message.reply_text("Нічого немає")
-        return
-    
-    data = data_store[uid]
-    prices = get_prices(data["symbol"])
-    
-    text = f"{data['symbol']} STATUS\n\n"
-    for ex, p in prices.items():
-        text += f"{ex}: ${p}\n"
-    
-    await update.message.reply_text(text)
-
-async def test_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    symbol = "BTC"
-    if context.args:
-        symbol = context.args[0].upper()
-    
-    prices = get_prices(symbol)
-    text = f"ТЕСТ {symbol}:\n\n"
-    for ex, p in prices.items():
-        text += f"{ex}: ${p}\n"
-    
-    await update.message.reply_text(text)
 
 async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("Скасовано")
     return ConversationHandler.END
 
-app = ApplicationBuilder().token(os.getenv("BOT_TOKEN")).build()
-
-conv = ConversationHandler(
-    entry_points=[MessageHandler(filters.TEXT & ~filters.COMMAND, start_monitor)],
-    states={INTERVAL: [MessageHandler(filters.TEXT & ~filters.COMMAND, set_interval)]},
-    fallbacks=[CommandHandler("cancel", cancel)]
-)
-
-app.add_handler(conv)
-app.add_handler(CommandHandler("stop", stop_command))
-app.add_handler(CommandHandler("status", status_command))
-app.add_handler(CommandHandler("test", test_command))
-
-print("Спред бот запущено!")
-app.run_polling(drop_pending_updates=True)
+if __name__ == "__main__":
+    app = ApplicationBuilder().token(os.getenv("BOT_TOKEN")).build()
+    
+    conv = ConversationHandler(
+        entry_points=[MessageHandler(filters.text & ~filters.command, setup_trade)],
+        states={INTERVAL: []},
+        fallbacks=[CommandHandler("cancel", cancel)]
+    )
+    
+    app.add_handler(conv)
+    app.add_handler(CommandHandler("test", test_command))
+    app.add_handler(CommandHandler("monitor", start_monitor))
+    app.add_handler(CommandHandler("status", status_command))
+    app.add_handler(CommandHandler("stop", stop_command))
+    
+    print("🚀 Спред Бот - ВСІ ТОКЕНИ!")
+    app.run_polling(drop_pending_updates=True)
