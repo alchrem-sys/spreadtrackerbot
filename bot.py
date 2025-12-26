@@ -2,7 +2,6 @@ import os
 import asyncio
 import logging
 import requests
-from typing import Dict, Optional
 from telegram import Update
 from telegram.ext import (
     ApplicationBuilder, 
@@ -14,7 +13,6 @@ from telegram.ext import (
 )
 
 logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
 
 # API Endpoints
 EXCHANGE_APIS = {
@@ -29,7 +27,6 @@ GMGN_URL = "https://gmgn.ai/defi/quotation/v1/tokens"
 
 PRICE1, EXCHANGE1, EXCHANGE2, INTERVAL = range(4)
 
-# Global storage - ПОВНИЙ РЯДОК БЕЗ ПОМИЛОК
 user_data = {}
 user_tasks = {}
 
@@ -62,7 +59,7 @@ def get_gmgn_price(token_address):
     except:
         return None
 
-async def start(update, context):
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "📊 Спред PnL Бот\n\n"
         "Введи: ціна1 ціна2 токени символ\n\n"
@@ -70,7 +67,7 @@ async def start(update, context):
     )
     return PRICE1
 
-async def get_prices(update, context):
+async def get_prices(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         parts = update.message.text.strip().split()
         if len(parts) < 4:
@@ -101,17 +98,17 @@ async def get_prices(update, context):
         await update.message.reply_text("Неправильний формат")
         return PRICE1
 
-async def get_exchange1(update, context):
+async def get_exchange1(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data["exchange1"] = update.message.text.strip().lower()
     await update.message.reply_text("Біржа №2 (mexc, binance, gate, bitget, orbit, gmgn:контракт):")
     return EXCHANGE2
 
-async def get_exchange2(update, context):
+async def get_exchange2(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data["exchange2"] = update.message.text.strip().lower()
     await update.message.reply_text("⏰ Інтервал в хвилинах (1-60):")
     return INTERVAL
 
-async def get_interval(update, context):
+async def get_interval(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         interval_min = int(update.message.text.strip())
         if interval_min < 1 or interval_min > 60:
@@ -159,7 +156,6 @@ async def monitor_spread(user_id, app):
             
             if price1 and price2:
                 current_pnl_usd = data["amount"] * (price2 - price1)
-                pnl_change_pct = ((current_pnl_usd - initial_pnl_usd) / initial_pnl_usd) * 100 if initial_pnl_usd != 0 else 0
                 current_spread_pct = ((price2 - price1) / price1) * 100
                 
                 text = (
@@ -174,11 +170,10 @@ async def monitor_spread(user_id, app):
             await asyncio.sleep(interval_sec)
         except asyncio.CancelledError:
             break
-        except Exception as e:
-            logger.error(f"Error {user_id}: {e}")
+        except Exception:
             await asyncio.sleep(60)
 
-async def stop(update, context):
+async def stop(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     if user_id in user_tasks and not user_tasks[user_id].done():
         user_tasks[user_id].cancel()
@@ -187,14 +182,16 @@ async def stop(update, context):
     else:
         await update.message.reply_text("Не активний")
 
-async def status(update, context):
+async def status(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     if user_id not in user_
         await update.message.reply_text("Немає моніторингів")
         return
     
     data = user_data[user_id]
-    exchange1, exchange2, symbol = data["exchange1"], data["exchange2"], data["symbol"]
+    exchange1 = data["exchange1"]
+    exchange2 = data["exchange2"]
+    symbol = data["symbol"]
     
     price1 = get_gmgn_price(exchange1.split(":")[1]) if "gmgn" in exchange1 else get_cex_price(exchange1, symbol)
     price2 = get_gmgn_price(exchange2.split(":")[1]) if "gmgn" in exchange2 else get_cex_price(exchange2, symbol)
@@ -215,7 +212,7 @@ async def status(update, context):
     
     await update.message.reply_text(text)
 
-async def cancel(update, context):
+async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("❌ Скасовано")
     return ConversationHandler.END
 
