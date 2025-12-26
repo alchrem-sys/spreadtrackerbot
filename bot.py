@@ -34,7 +34,7 @@ user_ Dict[int, Dict] = {}
 user_tasks: Dict[int, asyncio.Task] = {}
 
 def get_cex_price(exchange: str, symbol: str) -> Optional[float]:
-    """Get price from CEX (synchronous for Railway)"""
+    """Get price from CEX"""
     config = EXCHANGE_APIS.get(exchange.lower())
     if not config:
         return None
@@ -46,7 +46,7 @@ def get_cex_price(exchange: str, symbol: str) -> Optional[float]:
             return float(data[0]["last"]) if data else None
         elif exchange.lower() == "bitget":
             resp = requests.get(f"{config['url']}?symbol={symbol.upper()}USDT", timeout=5)
-            data = resp.json()["data"]
+            data = resp.json().get("data", [])
             return float(data[0]["lastPr"]) if data else None
         else:
             resp = requests.get(config['url'], params={config['param']: f"{symbol.upper()}USDT"}, timeout=5)
@@ -66,7 +66,7 @@ def get_gmgn_price(token_address: str) -> Optional[float]:
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
-        "📊 Спред PnL Бот для Railway\n\n"
+        "📊 Спред PnL Бот\n\n"
         "Введи початкові дані:\n"
         "ціна1 ціна2 токени символ\n\n"
         "Приклад:\n"
@@ -157,15 +157,13 @@ async def get_interval(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return INTERVAL
 
 async def monitor_spread(user_id: int, app):
-    """Background monitoring task for Railway"""
+    """Background monitoring task"""
     data = user_data[user_id]
     interval_sec = data["interval_min"] * 60
-    initial_spread_pct = data["initial_spread_pct"]
     initial_pnl_usd = data["amount"] * (data["price2"] - data["price1"])
     
     while user_id in user_tasks:
         try:
-            # Get current prices
             exchange1 = data["exchange1"]
             exchange2 = data["exchange2"]
             symbol = data["symbol"]
@@ -174,12 +172,10 @@ async def monitor_spread(user_id: int, app):
             price2 = get_gmgn_price(exchange2.split(":")[1]) if "gmgn" in exchange2 else get_cex_price(exchange2, symbol)
             
             if price1 and price2:
-                # Calculate metrics
-                current_spread_pct = ((price2 - price1) / price1) * 100
                 current_pnl_usd = data["amount"] * (price2 - price1)
                 pnl_change_pct = ((current_pnl_usd - initial_pnl_usd) / initial_pnl_usd) * 100 if initial_pnl_usd != 0 else 0
+                current_spread_pct = ((price2 - price1) / price1) * 100
                 
-                # Send update
                 text = (
                     f"📊 {data['symbol'].upper()} PnL\n\n"
                     f"💱 {data['exchange1']}: ${price1:.8f}\n"
@@ -220,10 +216,10 @@ async def status(update: Update, context: ContextTypes.DEFAULT_TYPE):
     price2 = get_gmgn_price(exchange2.split(":")[1]) if "gmgn" in exchange2 else get_cex_price(exchange2, symbol)
     
     if price1 and price2:
-        current_spread_pct = ((price2 - price1) / price1) * 100
         current_pnl_usd = data["amount"] * (price2 - price1)
         initial_pnl_usd = data["amount"] * (data["price2"] - data["price1"])
         pnl_change_pct = ((current_pnl_usd - initial_pnl_usd) / initial_pnl_usd) * 100 if initial_pnl_usd != 0 else 0
+        current_spread_pct = ((price2 - price1) / price1) * 100
         
         text = (
             f"📋 Поточний статус\n\n"
@@ -246,7 +242,6 @@ async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return ConversationHandler.END
 
 def main():
-    """Railway-ready main function"""
     if not os.getenv("BOT_TOKEN"):
         logger.error("BOT_TOKEN not set!")
         return
