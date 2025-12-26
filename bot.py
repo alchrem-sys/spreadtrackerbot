@@ -30,17 +30,23 @@ async def prices(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("0.54 0.58 1000 sol")
         return PRICE1
     
-    price1 = float(parts[0])
-    price2 = float(parts[1])
-    amount = float(parts[2])
-    symbol = parts[3]
-    
-    context.user_data = {
-        "p1": price1, "p2": price2, "amt": amount, "sym": symbol
-    }
-    
-    await update.message.reply_text("Біржа1 (mexc/binance):")
-    return EXCHANGE1
+    try:
+        price1 = float(parts[0])
+        price2 = float(parts[1])
+        amount = float(parts[2])
+        symbol = parts[3]
+        
+        # ВИПРАВЛЕНО: використовуємо context.user_data.clear() + update()
+        context.user_data.clear()
+        context.user_data.update({
+            "p1": price1, "p2": price2, "amt": amount, "sym": symbol
+        })
+        
+        await update.message.reply_text("Біржа1 (mexc/binance):")
+        return EXCHANGE1
+    except:
+        await update.message.reply_text("Неправильно!")
+        return PRICE1
 
 async def exch1(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data["ex1"] = update.message.text.strip().lower()
@@ -53,42 +59,50 @@ async def exch2(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return INTERVAL
 
 async def interval(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    mins = int(update.message.text)
-    uid = update.effective_user.id
-    data = context.user_data.copy()
-    data["sec"] = mins * 60
-    
-    data_store[uid] = data
-    
-    if uid in tasks_store:
-        tasks_store[uid].cancel()
-    
-    app = context.application
-    task = asyncio.create_task(run_monitor(uid, app))
-    tasks_store[uid] = task
-    
-    await update.message.reply_text(f"Запущено! {mins} хв\n/status /stop")
-    return ConversationHandler.END
+    try:
+        mins = int(update.message.text)
+        uid = update.effective_user.id
+        data = context.user_data.copy()
+        data["sec"] = mins * 60
+        
+        data_store[uid] = data
+        
+        if uid in tasks_store:
+            tasks_store[uid].cancel()
+        
+        app = context.application
+        task = asyncio.create_task(run_monitor(uid, app))
+        tasks_store[uid] = task
+        
+        await update.message.reply_text(f"Запущено! {mins} хв\n/status /stop")
+        return ConversationHandler.END
+    except:
+        await update.message.reply_text("Число 1-60!")
+        return INTERVAL
 
 async def run_monitor(uid, app):
     data = data_store[uid]
     while uid in tasks_store:
-        p1 = get_price(data["ex1"], data["sym"])
-        p2 = get_price(data["ex2"], data["sym"])
-        
-        if p1 and p2:
-            pnl = data["amt"] * (p2 - p1)
-            text = f"{data['sym'].upper()}\n{data['ex1']}: ${p1:.6f}\n{data['ex2']}: ${p2:.6f}\nPnL: ${pnl:+.2f}"
-            await app.bot.send_message(uid, text)
-        
-        await asyncio.sleep(data["sec"])
+        try:
+            p1 = get_price(data["ex1"], data["sym"])
+            p2 = get_price(data["ex2"], data["sym"])
+            
+            if p1 and p2:
+                pnl = data["amt"] * (p2 - p1)
+                text = f"{data['sym'].upper()}\n{data['ex1']}: ${p1:.6f}\n{data['ex2']}: ${p2:.6f}\nPnL: ${pnl:+.2f}"
+                await app.bot.send_message(uid, text)
+            
+            await asyncio.sleep(data["sec"])
+        except:
+            await asyncio.sleep(60)
 
 async def stop(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
     if uid in tasks_store:
         tasks_store[uid].cancel()
-        data_store.pop(uid, None)
-        await update.message.reply_text("Зупинено")
+        if uid in data_store:
+            del data_store[uid]
+        await update.message.reply_text("🛑 Зупинено")
     else:
         await update.message.reply_text("Не запущено")
 
@@ -135,5 +149,5 @@ if __name__ == "__main__":
     app.add_handler(CommandHandler("stop", stop))
     app.add_handler(CommandHandler("status", status))
     
-    print("Бот запущено!")
+    print("🚀 Бот запущено!")
     app.run_polling()
