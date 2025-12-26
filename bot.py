@@ -9,61 +9,78 @@ PRICE1, EXCHANGE1, EXCHANGE2, INTERVAL = range(4)
 data_store = {}
 tasks_store = {}
 
-def test_all_prices(symbol):
-    """Тестує всі біржі одразу"""
-    results = {}
+def get_futures_price(exchange, symbol):
+    """Ф'ючерсні ціни з усіх бірж"""
     symbol_usdt = f"{symbol.upper()}USDT"
     
-    try:
-        # MEXC
-        r = requests.get("https://api.mexc.com/api/v3/ticker/price", params={"symbol": symbol_usdt}, timeout=3)
-        results["mexc"] = r.json().get("price", "ERROR")
-    except:
-        results["mexc"] = "FAIL"
-    
-    try:
-        # Binance
-        r = requests.get("https://api.binance.com/api/v3/ticker/price", params={"symbol": symbol_usdt}, timeout=3)
-        results["binance"] = r.json().get("price", "ERROR")
-    except:
-        results["binance"] = "FAIL"
-    
-    return results
-
-def get_price(exchange, symbol):
-    symbol_usdt = f"{symbol.upper()}USDT"
     try:
         if exchange == "mexc":
-            r = requests.get("https://api.mexc.com/api/v3/ticker/price", params={"symbol": symbol_usdt}, timeout=5)
+            # MEXC Futures
+            r = requests.get("https://contract.mexc.com/api/v1/contract/detail", params={"symbol": symbol_usdt}, timeout=5)
             data = r.json()
-            return float(data["price"]) if "price" in data else None
+            return float(data["data"][0]["lastPrice"]) if data.get("data") else None
+            
         elif exchange == "binance":
-            r = requests.get("https://api.binance.com/api/v3/ticker/price", params={"symbol": symbol_usdt}, timeout=5)
+            # Binance Futures USDT
+            r = requests.get("https://fapi.binance.com/fapi/v1/ticker/price", params={"symbol": symbol_usdt}, timeout=5)
             data = r.json()
             return float(data["price"]) if "price" in data else None
+            
+        elif exchange == "bitget":
+            # Bitget Futures
+            r = requests.get("https://api.bitget.com/api/mix/v1/market/ticker", params={"symbol": f"{symbol}_USDT", "productType": "USDT-FUTURES"}, timeout=5)
+            data = r.json()
+            if data.get("code") == "00000" and data.get("data"):
+                return float(data["data"][0]["lastPr"])
+                
+        elif exchange == "gate":
+            # Gate Futures
+            r = requests.get("https://api.gateio.ws/api/v4/futures/usdt/tickers", params={"contract": symbol_usdt}, timeout=5)
+            data = r.json()
+            return float(data[0]["last"]) if data else None
+            
+        elif exchange == "bingx":
+            # BingX Futures
+            r = requests.get("https://open-api.bingx.com/openApi/swap/v2/quote/ticker", params={"symbol": symbol_usdt}, timeout=5)
+            data = r.json()
+            if data.get("code") == 0 and data.get("data"):
+                return float(data["data"][0]["lastPr"])
+                
     except:
         return None
 
+def test_all_prices(symbol):
+    """Тестує всі ф'ючерсні API"""
+    results = {}
+    for exchange in ["mexc", "binance", "bitget", "gate", "bingx"]:
+        price = get_futures_price(exchange, symbol)
+        results[exchange] = price or "ERROR"
+    return results
+
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("📊 Спред бот\n\n/test BTC - перевірити API\nабо\nціна1 ціна2 токени символ")
+    await update.message.reply_text(
+        "🚀 Ф'ючерсний Спред Bot\n\n"
+        "/test BTC - перевірити API\n"
+        "або ціна1 ціна2 токени символ"
+    )
     return PRICE1
 
 async def test_api(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Команда /test для діагностики"""
+    """Тест всіх ф'ючерсних бірж"""
     if context.args:
         symbol = context.args[0].upper()
         results = test_all_prices(symbol)
-        text = f"🧪 Тест {symbol}:\n\n"
+        text = f"🧪 Ф'ючерси {symbol}:\n\n"
         for exch, price in results.items():
-            text += f"{exch}: {price}\n"
+            text += f"{exch.upper()}: {price}\n"
         await update.message.reply_text(text)
     else:
-        await update.message.reply_text("Використай /test BTC")
+        await update.message.reply_text("/test BTC")
 
 async def prices(update: Update, context: ContextTypes.DEFAULT_TYPE):
     parts = update.message.text.split()
     if len(parts) < 4: 
-        await update.message.reply_text("Формат: 60000 60200 0.1 BTC\nСпочатку перевір /test BTC")
+        await update.message.reply_text("60000 60200 0.1 BTC")
         return PRICE1
     
     try:
@@ -77,25 +94,34 @@ async def prices(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "p1": price1, "p2": price2, "amt": amount, "sym": symbol
         })
         
-        # Тестуємо API одразу
-        test_results = test_all_prices(symbol)
-        test_text = "📊 API тест:\n" + "\n".join([f"{k}: {v}" for k,v in test_results.items()])
+        results = test_all_prices(symbol)
+        test_text = "\n".join([f"{k}: {v}" for k,v in results.items()])
         
         await update.message.reply_text(
-            f"✅ {symbol}\nТокенів: {amount}\n\n{test_text}\n\nБіржа1 (mexc/binance):"
+            f"✅ {symbol} | {amount} токенів\n\n"
+            f"🧪 API:\n{test_text}\n\n"
+            f"Біржа1 (mexc/binance/bitget/gate/bingx):"
         )
         return EXCHANGE1
     except:
-        await update.message.reply_text("Помилка! Приклад: 60000 60200 0.1 BTC")
+        await update.message.reply_text("60000 60200 0.1 BTC")
         return PRICE1
 
 async def exch1(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    context.user_data["ex1"] = update.message.text.strip().lower()
-    await update.message.reply_text("Біржа2 (mexc/binance):")
+    ex1 = update.message.text.strip().lower()
+    if ex1 not in ["mexc", "binance", "bitget", "gate", "bingx"]:
+        await update.message.reply_text("mexc/binance/bitget/gate/bingx")
+        return EXCHANGE1
+    context.user_data["ex1"] = ex1
+    await update.message.reply_text("Біржа2 (mexc/binance/bitget/gate/bingx):")
     return EXCHANGE2
 
 async def exch2(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    context.user_data["ex2"] = update.message.text.strip().lower()
+    ex2 = update.message.text.strip().lower()
+    if ex2 not in ["mexc", "binance", "bitget", "gate", "bingx"]:
+        await update.message.reply_text("mexc/binance/bitget/gate/bingx")
+        return EXCHANGE2
+    context.user_data["ex2"] = ex2
     await update.message.reply_text("Хвилини (1-60):")
     return INTERVAL
 
@@ -115,25 +141,30 @@ async def interval(update: Update, context: ContextTypes.DEFAULT_TYPE):
         task = asyncio.create_task(run_monitor(uid, app))
         tasks_store[uid] = task
         
-        await update.message.reply_text(f"🚀 Запущено! {mins} хв\n/status /stop")
+        await update.message.reply_text(f"🚀 Запущено!\n{data['sym']} | {mins} хв\n/status /stop")
         return ConversationHandler.END
     except:
-        await update.message.reply_text("Число 1-60!")
+        await update.message.reply_text("1-60!")
         return INTERVAL
 
 async def run_monitor(uid, app):
     data = data_store[uid]
     while uid in tasks_store:
         try:
-            p1 = get_price(data["ex1"], data["sym"])
-            p2 = get_price(data["ex2"], data["sym"])
+            p1 = get_futures_price(data["ex1"], data["sym"])
+            p2 = get_futures_price(data["ex2"], data["sym"])
             
             if p1 and p2:
                 pnl = data["amt"] * (p2 - p1)
-                text = f"📊 {data['sym']}\n{data['ex1'].upper()}: ${p1:.4f}\n{data['ex2'].upper()}: ${p2:.4f}\n💵 PnL: ${pnl:+.2f}"
+                text = (
+                    f"📊 {data['sym']} Ф'ючерси\n\n"
+                    f"💱 {data['ex1'].upper()}: ${p1:.2f}\n"
+                    f"💰 {data['ex2'].upper()}: ${p2:.2f}\n\n"
+                    f"💵 PnL: ${pnl:+.2f}"
+                )
                 await app.bot.send_message(uid, text)
             else:
-                await app.bot.send_message(uid, f"❌ {data['sym']} немає ціни")
+                await app.bot.send_message(uid, f"❌ {data['sym']} немає на {data['ex1']}/{data['ex2']}")
             
             await asyncio.sleep(data["sec"])
         except:
@@ -155,15 +186,15 @@ async def status(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     
     data = data_store[uid]
-    p1 = get_price(data["ex1"], data["sym"])
-    p2 = get_price(data["ex2"], data["sym"])
+    p1 = get_futures_price(data["ex1"], data["sym"])
+    p2 = get_futures_price(data["ex2"], data["sym"])
     
     if p1 and p2:
         pnl = data["amt"] * (p2 - p1)
         await update.message.reply_text(
-            f"📋 {data['sym']}\n"
-            f"{data['ex1'].upper()}: ${p1:.4f}\n"
-            f"{data['ex2'].upper()}: ${p2:.4f}\n"
+            f"📋 {data['sym']} Статус\n"
+            f"{data['ex1'].upper()}: ${p1:.2f}\n"
+            f"{data['ex2'].upper()}: ${p2:.2f}\n"
             f"💵 PnL: ${pnl:+.2f}"
         )
     else:
@@ -192,5 +223,5 @@ if __name__ == "__main__":
     app.add_handler(CommandHandler("stop", stop))
     app.add_handler(CommandHandler("status", status))
     
-    print("🚀 Бот з тестом запущено!")
+    print("🚀 Ф'ючерсний бот запущено!")
     app.run_polling()
