@@ -1,229 +1,149 @@
 import os
 import asyncio
-import logging
 import requests
 from telegram import Update
-from telegram.ext import (
-    ApplicationBuilder, 
-    CommandHandler, 
-    MessageHandler, 
-    ContextTypes, 
-    ConversationHandler, 
-    filters
-)
-
-logging.basicConfig(level=logging.INFO)
-
-# API Endpoints
-EXCHANGE_APIS = {
-    "mexc": {"url": "https://api.mexc.com/api/v3/ticker/price", "param": "symbol"},
-    "binance": {"url": "https://api.binance.com/api/v3/ticker/price", "param": "symbol"},
-    "gate": {"url": "https://api.gateio.ws/api/v4/spot/tickers", "param": "currency_pair"},
-    "bitget": {"url": "https://api.bitget.com/api/spot/v1/market/ticker", "param": "symbol"},
-    "orbit": {"url": "https://api.orbitchain.io/v1/market/ticker", "param": "symbol"}
-}
-
-GMGN_URL = "https://gmgn.ai/defi/quotation/v1/tokens"
+from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, ContextTypes, ConversationHandler, filters
 
 PRICE1, EXCHANGE1, EXCHANGE2, INTERVAL = range(4)
 
 user_data = {}
 user_tasks = {}
 
-def get_cex_price(exchange, symbol):
-    config = EXCHANGE_APIS.get(exchange.lower())
-    if not config:
-        return None
-    
-    try:
-        if exchange.lower() == "gate":
-            resp = requests.get(f"{config['url']}?currency_pair={symbol.upper()}_USDT", timeout=5)
-            data = resp.json()
-            return float(data[0]["last"]) if data else None
-        elif exchange.lower() == "bitget":
-            resp = requests.get(f"{config['url']}?symbol={symbol.upper()}USDT", timeout=5)
-            data = resp.json().get("data", [])
-            return float(data[0]["lastPr"]) if data else None
-        else:
-            resp = requests.get(config['url'], params={config['param']: f"{symbol.upper()}USDT"}, timeout=5)
-            data = resp.json()
-            return float(data["price"]) if isinstance(data, dict) and "price" in data else None
-    except:
-        return None
+EXCHANGE_APIS = {
+    "mexc": "https://api.mexc.com/api/v3/ticker/price",
+    "binance": "https://api.binance.com/api/v3/ticker/price",
+    "gate": "https://api.gateio.ws/api/v4/spot/tickers",
+    "bitget": "https://api.bitget.com/api/spot/v1/market/ticker"
+}
 
-def get_gmgn_price(token_address):
+def get_price(exchange, symbol):
     try:
-        resp = requests.get(f"{GMGN_URL}/{token_address}", timeout=10)
-        data = resp.json()
-        return float(data.get("price", 0)) if data else None
+        if exchange == "gate":
+            r = requests.get(f"{EXCHANGE_APIS['gate']}?currency_pair={symbol}USDT", timeout=5)
+            return float(r.json()[0]["last"])
+        elif exchange == "bitget":
+            r = requests.get(f"{EXCHANGE_APIS['bitget']}?symbol={symbol}USDT", timeout=5)
+            return float(r.json()["data"][0]["lastPr"])
+        else:
+            r = requests.get(EXCHANGE_APIS[exchange], params={"symbol": f"{symbol}USDT"}, timeout=5)
+            return float(r.json()["price"])
     except:
         return None
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text(
-        "📊 Спред PnL Бот\n\n"
-        "Введи: ціна1 ціна2 токени символ\n\n"
-        "Приклад: 0.54 0.58 1000 sol"
-    )
+    await update.message.reply_text("Введи: ціна1 ціна2 токени символ\nПриклад: 0.54 0.58 1000 sol")
     return PRICE1
 
 async def get_prices(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    parts = update.message.text.split()
+    if len(parts) < 4:
+        await update.message.reply_text("Формат: 0.54 0.58 1000 sol")
+        return PRICE1
+    
     try:
-        parts = update.message.text.strip().split()
-        if len(parts) < 4:
-            await update.message.reply_text("Формат: ціна1 ціна2 токени символ\nПриклад: 0.54 0.58 1000 sol")
-            return PRICE1
-        
         price1 = float(parts[0])
         price2 = float(parts[1])
         amount = float(parts[2])
-        symbol = parts[3].lower()
+        symbol = parts[3]
         
         context.user_data.update({
-            "price1": price1, "price2": price2, "amount": amount, 
-            "symbol": symbol, "initial_spread_pct": ((price2-price1)/price1)*100
+            "price1": price1, "price2": price2, "amount": amount, "symbol": symbol
         })
         
         await update.message.reply_text(
-            f"✅ Зафіксовано:\n"
-            f"📈 Ціна 1: ${price1:.8f}\n"
-            f"📉 Ціна 2: ${price2:.8f}\n"
-            f"💰 Токенів: {amount:,}\n"
-            f"🪙 {symbol.upper()}\n\n"
-            f"💵 Початковий PnL: ${(price2-price1)*amount:.2f}\n\n"
-            f"Біржа №1 (mexc, binance, gate, bitget, orbit, gmgn:контракт):"
+            f"✅ Ціна1: ${price1}\nЦіна2: ${price2}\nТокенів: {amount}\n{symbol}\n\nБіржа1 (mexc/binance/gate/bitget):"
         )
         return EXCHANGE1
-    except ValueError:
-        await update.message.reply_text("Неправильний формат")
+    except:
+        await update.message.reply_text("Неправильно!")
         return PRICE1
 
 async def get_exchange1(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data["exchange1"] = update.message.text.strip().lower()
-    await update.message.reply_text("Біржа №2 (mexc, binance, gate, bitget, orbit, gmgn:контракт):")
+    await update.message.reply_text("Біржа2:")
     return EXCHANGE2
 
 async def get_exchange2(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data["exchange2"] = update.message.text.strip().lower()
-    await update.message.reply_text("⏰ Інтервал в хвилинах (1-60):")
+    await update.message.reply_text("Інтервал хвилин (1-60):")
     return INTERVAL
 
 async def get_interval(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
-        interval_min = int(update.message.text.strip())
-        if interval_min < 1 or interval_min > 60:
-            await update.message.reply_text("Інтервал 1-60 хвилин")
-            return INTERVAL
-        
+        minutes = int(update.message.text)
         user_id = update.effective_user.id
         data = context.user_data.copy()
-        data["interval_min"] = interval_min
+        data["interval"] = minutes * 60
         
         user_data[user_id] = data
         
-        if user_id in user_tasks and not user_tasks[user_id].done():
+        if user_id in user_tasks:
             user_tasks[user_id].cancel()
         
         app = context.application
-        task = asyncio.create_task(monitor_spread(user_id, app))
+        task = asyncio.create_task(monitor(user_id, app))
         user_tasks[user_id] = task
         
-        await update.message.reply_text(
-            f"🚀 Запущено!\n\n"
-            f"⏰ Кожні {interval_min} хв\n"
-            f"🪙 {data['symbol'].upper()}\n"
-            f"💱 {data['exchange1']} ↔ {data['exchange2']}\n\n"
-            f"/status - статус\n/stop - зупинити"
-        )
+        await update.message.reply_text(f"🚀 Запущено! Кожні {minutes} хв\n/status\n/stop")
         return ConversationHandler.END
-    except ValueError:
-        await update.message.reply_text("Введи число 1-60")
+    except:
+        await update.message.reply_text("Число 1-60!")
         return INTERVAL
 
-async def monitor_spread(user_id, app):
+async def monitor(user_id, app):
     data = user_data[user_id]
-    interval_sec = data["interval_min"] * 60
-    initial_pnl_usd = data["amount"] * (data["price2"] - data["price1"])
-    
     while user_id in user_tasks:
         try:
-            exchange1 = data["exchange1"]
-            exchange2 = data["exchange2"]
-            symbol = data["symbol"]
+            p1 = get_price(data["exchange1"], data["symbol"])
+            p2 = get_price(data["exchange2"], data["symbol"])
             
-            price1 = get_gmgn_price(exchange1.split(":")[1]) if "gmgn" in exchange1 else get_cex_price(exchange1, symbol)
-            price2 = get_gmgn_price(exchange2.split(":")[1]) if "gmgn" in exchange2 else get_cex_price(exchange2, symbol)
+            if p1 and p2:
+                pnl = data["amount"] * (p2 - p1)
+                text = f"{data['symbol'].upper()}\n{data['exchange1']}: ${p1:.6f}\n{data['exchange2']}: ${p2:.6f}\nPnL: ${pnl:+.2f}"
+                await app.bot.send_message(user_id, text)
             
-            if price1 and price2:
-                current_pnl_usd = data["amount"] * (price2 - price1)
-                current_spread_pct = ((price2 - price1) / price1) * 100
-                
-                text = (
-                    f"📊 {data['symbol'].upper()} PnL\n\n"
-                    f"💱 {data['exchange1']}: ${price1:.8f}\n"
-                    f"💰 {data['exchange2']}: ${price2:.8f}\n\n"
-                    f"📈 Спред: {current_spread_pct:.2f}%\n"
-                    f"💵 PnL: ${current_pnl_usd:+.2f}"
-                )
-                await app.bot.send_message(chat_id=user_id, text=text)
-            
-            await asyncio.sleep(interval_sec)
-        except asyncio.CancelledError:
-            break
-        except Exception:
+            await asyncio.sleep(data["interval"])
+        except:
             await asyncio.sleep(60)
 
 async def stop(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
-    if user_id in user_tasks and not user_tasks[user_id].done():
+    if user_id in user_tasks:
         user_tasks[user_id].cancel()
         user_data.pop(user_id, None)
         await update.message.reply_text("🛑 Зупинено")
     else:
-        await update.message.reply_text("Не активний")
+        await update.message.reply_text("Не запущено")
 
 async def status(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     if user_id not in user_
-        await update.message.reply_text("Немає моніторингів")
+        await update.message.reply_text("Нічого не запущено")
         return
     
     data = user_data[user_id]
-    exchange1 = data["exchange1"]
-    exchange2 = data["exchange2"]
-    symbol = data["symbol"]
+    p1 = get_price(data["exchange1"], data["symbol"])
+    p2 = get_price(data["exchange2"], data["symbol"])
     
-    price1 = get_gmgn_price(exchange1.split(":")[1]) if "gmgn" in exchange1 else get_cex_price(exchange1, symbol)
-    price2 = get_gmgn_price(exchange2.split(":")[1]) if "gmgn" in exchange2 else get_cex_price(exchange2, symbol)
-    
-    if price1 and price2:
-        current_pnl_usd = data["amount"] * (price2 - price1)
-        text = (
-            f"📋 Статус\n\n"
-            f"🪙 {symbol.upper()}\n"
-            f"💱 {exchange1} ↔ {exchange2}\n"
-            f"💰 {data['amount']:,} токенів\n\n"
-            f"{exchange1}: ${price1:.8f}\n"
-            f"{exchange2}: ${price2:.8f}\n\n"
-            f"💵 PnL: ${current_pnl_usd:+.2f}"
+    if p1 and p2:
+        pnl = data["amount"] * (p2 - p1)
+        await update.message.reply_text(
+            f"{data['symbol'].upper()}\n"
+            f"{data['exchange1']}: ${p1:.6f}\n"
+            f"{data['exchange2']}: ${p2:.6f}\n"
+            f"PnL: ${pnl:+.2f}"
         )
     else:
-        text = "Ціни недоступні"
-    
-    await update.message.reply_text(text)
+        await update.message.reply_text("Ціни недоступні")
 
 async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("❌ Скасовано")
+    await update.message.reply_text("Скасовано")
     return ConversationHandler.END
 
 def main():
-    if not os.getenv("BOT_TOKEN"):
-        print("BOT_TOKEN потрібен!")
-        return
-    
     app = ApplicationBuilder().token(os.getenv("BOT_TOKEN")).build()
     
-    conv_handler = ConversationHandler(
+    conv = ConversationHandler(
         entry_points=[CommandHandler("start", start)],
         states={
             PRICE1: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_prices)],
@@ -234,11 +154,11 @@ def main():
         fallbacks=[CommandHandler("cancel", cancel)]
     )
     
-    app.add_handler(conv_handler)
+    app.add_handler(conv)
     app.add_handler(CommandHandler("stop", stop))
     app.add_handler(CommandHandler("status", status))
     
-    print("🚀 Бот запущено!")
+    print("🚀 Бот працює!")
     app.run_polling()
 
 if __name__ == "__main__":
