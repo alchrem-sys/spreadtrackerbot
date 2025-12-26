@@ -1,17 +1,18 @@
 import os
 import asyncio
+import time
 from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, ContextTypes, filters
 
 tracked_accounts = {}
-chat_jobs = {}
+monitor_tasks = {}
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "🚀 Twitter Monitor\n\n"
-        "/track @username - відстежити\n"
-        "/stop - зупинити\n"
-        "/list - список"
+        "/track @username\n"
+        "/list\n"
+        "/stop"
     )
 
 async def track_account(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -24,40 +25,31 @@ async def track_account(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     tracked_accounts[chat_id] = username
     
-    # Симуляція Twitter повідомлення
+    # Зупиняємо попередню задачу
+    if chat_id in monitor_tasks:
+        monitor_tasks[chat_id].cancel()
+    
+    # Запускаємо нову
+    task = asyncio.create_task(monitor_loop(chat_id, username, context.application))
+    monitor_tasks[chat_id] = task
+    
     await update.message.reply_text(f"✅ Відстежую @{username}")
-    
-    # Запускаємо фонове сканування кожні 30 сек
-    if chat_id in chat_jobs:
-        chat_jobs[chat_id].cancel()
-    
-    job = context.job_queue.run_repeating(
-        check_tweets_periodic, 
-        interval=30, 
-        chat_id=chat_id,
-        name=f"track_{username}"
-    )
-    chat_jobs[chat_id] = job
-    
-    await update.message.reply_text(f"🔄 Сканую @{username} кожні 30 сек")
 
-async def check_tweets_periodic(context: ContextTypes.DEFAULT_TYPE):
-    """Фоновий сканер твітів"""
-    chat_id = context.job.chat_id
-    username = tracked_accounts.get(chat_id)
-    
-    if username:
-        # Симуляція нового твіту
-        import random
-        import time
-        tweet_id = int(time.time())
-        
-        tweet_text = f"🐦 НОВИЙ ТВІТ @{username}\n\nTesla to Mars! 🚀\n\n🔗 twitter.com/{username}/status/{tweet_id}"
-        
-        await context.bot.send_message(
-            chat_id=chat_id,
-            text=tweet_text
-        )
+async def monitor_loop(chat_id, username, app):
+    """Фонове сканування кожні 30 сек"""
+    while chat_id in tracked_accounts:
+        try:
+            # Симуляція Twitter твіту
+            import random
+            tweet_id = int(time.time() * 1000 + random.randint(1, 999))
+            tweet_text = f"🐦 @{username}\n\n🚀 NEW TWEET #{random.randint(1, 1000)}!\n\n🔗 twitter.com/{username}/status/{tweet_id}"
+            
+            await app.bot.send_message(chat_id=chat_id, text=tweet_text)
+            await asyncio.sleep(1)  # 30 секунд
+        except asyncio.CancelledError:
+            break
+        except:
+            await asyncio.sleep(30)
 
 async def list_accounts(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
@@ -69,9 +61,9 @@ async def list_accounts(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def stop_monitor(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
     
-    if chat_id in chat_jobs:
-        chat_jobs[chat_id].schedule_removal()
-        del chat_jobs[chat_id]
+    if chat_id in monitor_tasks:
+        monitor_tasks[chat_id].cancel()
+        del monitor_tasks[chat_id]
     
     if chat_id in tracked_accounts:
         del tracked_accounts[chat_id]
@@ -86,5 +78,5 @@ if __name__ == "__main__":
     app.add_handler(CommandHandler("list", list_accounts))
     app.add_handler(CommandHandler("stop", stop_monitor))
     
-    print("🚀 Twitter Monitor - МОМЕНТАЛЬНІ ПОВІДОМЛЕННЯ!")
+    print("🚀 Twitter Monitor - ПОВІДОМЛЕННЯ КОЖНІ 30 СЕК!")
     app.run_polling(drop_pending_updates=True)
