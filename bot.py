@@ -9,9 +9,12 @@ def get_gate_price(symbol):
         data = r.json()
         
         symbol_usdt = f"{symbol.upper()}USDT"
-        for ticker in 
-            if ticker["contract"] == symbol_usdt:
-                return float(ticker["last"]), float(ticker["change_percentage"])
+        
+        # Шукаємо без for циклу
+        tickers = [t for t in data if t["contract"] == symbol_usdt]
+        if tickers:
+            ticker = tickers[0]
+            return float(ticker["last"]), float(ticker["change_percentage"])
         
         return None, None
     except:
@@ -23,18 +26,15 @@ async def price_handler(update: Update, context):
     
     if price:
         await update.message.reply_text(
-            f"GATE FUTURES {symbol}USDT\n"
+            f"GATE {symbol}USDT\n"
             f"${price:,.8f}\n"
             f"{change:+.2f}%"
         )
     else:
-        await update.message.reply_text(f"{symbol}USDT не знайдено")
+        await update.message.reply_text(f"{symbol}USDT ❌")
 
 async def start(update: Update, context):
-    await update.message.reply_text(
-        "GATE FUTURES\n\n"
-        "BTC\nSOL\nETH\nPEPE"
-    )
+    await update.message.reply_text("BTC\nSOL\nETH")
 
 if __name__ == "__main__":
     app = ApplicationBuilder().token(os.getenv("BOT_TOKEN")).build()
@@ -42,5 +42,5 @@ if __name__ == "__main__":
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, price_handler))
     app.add_handler(CommandHandler("start", start))
     
-    print("Gate Bot OK")
+    print("Gate Bot")
     app.run_polling(drop_pending_updates=True)
