@@ -4,84 +4,82 @@ import requests
 from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, ContextTypes, ConversationHandler, filters
 
+INTERVAL = 0
+
 data_store = {}
 tasks_store = {}
 
-def get_token_prices(symbol):
-    """CoinGecko tickers - всі біржі"""
-    try:
-        url = f"https://api.coingecko.com/api/v3/simple/token_price/{symbol.lower()}"
-        r = requests.get(url, params={"vs_currencies": "usd"}, timeout=10)
-        data = r.json()
-        return data
-    except:
-        return {}
-
-def get_direct_prices(symbol):
-    """Прямі біржі"""
-    prices = {}
+def get_token_price(symbol):
+    """Ціна з кількох бірж для будь-якого токена"""
     symbol_usdt = f"{symbol.upper()}USDT"
+    prices = {}
     
+    # Binance Futures
     try:
         r = requests.get(f"https://fapi.binance.com/fapi/v1/ticker/price?symbol={symbol_usdt}", timeout=3)
-        prices["binance_f"] = float(r.json()["price"])
+        prices["BinanceF"] = float(r.json()["price"])
     except:
         pass
     
+    # MEXC Spot
     try:
         r = requests.get(f"https://api.mexc.com/api/v3/ticker/price?symbol={symbol_usdt}", timeout=3)
-        prices["mexc"] = float(r.json()["price"])
+        prices["MEXC"] = float(r.json()["price"])
+    except:
+        pass
+    
+    # Gate.io Spot
+    try:
+        r = requests.get(f"https://api.gateio.ws/api/v4/spot/tickers?currency_pair={symbol_usdt}", timeout=3)
+        data = r.json()
+        prices["Gate"] = float(data[0]["last"]) if data else None
     except:
         pass
     
     return prices
 
-async def test_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def test_all_tokens(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """ /test TOKEN - показує ціни з бірж для будь-якого токена"""
     if not context.args:
-        await update.message.reply_text("/test btc або /test sol")
+        await update.message.reply_text("Використай: /test sol, /test pepe, /test bonk")
         return
     
-    symbol = context.args[0].lower()
+    symbol = context.args[0].upper()
+    prices = get_token_price(symbol)
     
-    direct_prices = get_direct_prices(symbol)
-    coingecko_price = get_token_prices(symbol)
+    if not prices:
+        await update.message.reply_text(f"❌ {symbol} не знайдено на біржах")
+        return
     
-    text = f"🧪 {symbol.upper()}\n\n"
+    text = f"🧪 {symbol} - ЦІНИ:\n\n"
+    min_price = min(prices.values())
+    max_price = max(prices.values())
+    min_ex = min(prices, key=prices.get)
+    max_ex = max(prices, key=prices.get)
     
-    for ex, p in direct_prices.items():
-        text += f"{ex}: ${p:.4f}\n"
+    for exchange, price in prices.items():
+        text += f"{exchange:<10}: ${price:.6f}\n"
     
-    if coingecko_price:
-        cg_price = coingecko_price.get(symbol, {}).get("usd")
-        if cg_price:
-            text += f"coingecko: ${cg_price:.4f}\n"
-    
-    if len(direct_prices) >= 2:
-        prices_list = list(direct_prices.values())
-        min_p = min(prices_list)
-        max_p = max(prices_list)
-        spread = (max_p - min_p) / min_p * 100
-        
-        min_ex = min(direct_prices, key=direct_prices.get)
-        max_ex = max(direct_prices, key=direct_prices.get)
-        
-        text += f"\n🎯 Спред {min_ex}-{max_ex}:\n"
-        text += f"${min_p:.4f} → ${max_p:.4f}\n"
-        text += f"{spread:.2f}%"
+    spread = (max_price - min_price) / min_price * 100
+    text += f"\n🎯 СПРЕД:\n"
+    text += f"🟢 Купити {min_ex}: ${min_price:.6f}\n"
+    text += f"🔴 Продати {max_ex}: ${max_price:.6f}\n"
+    text += f"📊 Спред: {spread:.2f}%"
     
     await update.message.reply_text(text)
 
 async def setup_trade(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Налаштування торгівлі для будь-якого токена"""
     parts = update.message.text.split()
     if len(parts) < 4:
-        await update.message.reply_text("87000 87200 0.1 btc")
+        await update.message.reply_text("0.0001 0.00011 1000000 SOL")
         return ConversationHandler.END
     
     try:
         low_price = float(parts[0])
         high_price = float(parts[1])
         amount = float(parts[2])
-        symbol = parts[3].lower()
+        symbol = parts[3].upper()
         
         uid = update.effective_user.id
         data_store[uid] = {
@@ -92,22 +90,25 @@ async def setup_trade(update: Update, context: ContextTypes.DEFAULT_TYPE):
         }
         
         await update.message.reply_text(
-            f"✅ {symbol.upper()} налаштовано\n"
-            f"🟢 Низька: ${low_price}\n"
-            f"🔴 Висока: ${high_price}\n"
-            f"💰 {amount} шт\n\n"
-            f"/test {symbol}\n/monitor 5"
+            f"✅ {symbol} НАЛАШТОВАНО!\n\n"
+            f"🟢 Низька ціна: ${low_price}\n"
+            f"🔴 Висока ціна: ${high_price}\n"
+            f"💰 Кількість: {amount}\n\n"
+            f"📊 /test {symbol}\n"
+            f"🚀 /monitor 5"
         )
         return ConversationHandler.END
+        
     except:
-        await update.message.reply_text("87000 87200 0.1 btc")
+        await update.message.reply_text("0.0001 0.00011 1000000 SOL")
         return ConversationHandler.END
 
-async def monitor_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def start_monitor(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Запуск моніторингу"""
     uid = update.effective_user.id
     
     if uid not in data_store:
-        await update.message.reply_text("Налаштуй: 87000 87200 0.1 btc")
+        await update.message.reply_text("Спочатку: 0.0001 0.00011 1000000 SOL")
         return
     
     try:
@@ -119,36 +120,41 @@ async def monitor_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             tasks_store[uid].cancel()
         
         app = context.application
-        task = asyncio.create_task(spread_monitor(uid, app))
+        task = asyncio.create_task(monitor_prices(uid, app))
         tasks_store[uid] = task
         
-        await update.message.reply_text(f"🚀 {data['symbol'].upper()} {minutes}хв\n/status /stop")
+        await update.message.reply_text(
+            f"🚀 МОНІТОРИНГ {data['symbol']}\n"
+            f"⏰ Кожні {minutes} хв\n"
+            f"/status /stop"
+        )
     except:
         await update.message.reply_text("/monitor 5")
 
-async def spread_monitor(uid, app):
+async def monitor_prices(uid, app):
+    """Моніторинг цін"""
     data = data_store[uid]
     while uid in tasks_store:
         try:
-            direct_prices = get_direct_prices(data["symbol"])
+            prices = get_token_price(data["symbol"])
             
-            if len(direct_prices) >= 2:
-                prices_list = list(direct_prices.values())
-                min_p = min(prices_list)
-                max_p = max(prices_list)
+            if len(prices) >= 2:
+                min_price = min(prices.values())
+                max_price = max(prices.values())
+                min_exchange = min(prices, key=prices.get)
+                max_exchange = max(prices, key=prices.get)
                 
-                min_ex = min(direct_prices, key=direct_prices.get)
-                max_ex = max(direct_prices, key=direct_prices.get)
+                spread_pct = (max_price - min_price) / min_price * 100
+                pnl = data["amount"] * (max_price - min_price)
                 
-                pnl = data["amount"] * (max_p - min_p)
+                text = f"📊 {data['symbol']} LIVE\n\n"
+                for ex, p in prices.items():
+                    text += f"{ex:<10}: ${p:.6f}\n"
                 
-                text = f"{data['symbol'].upper()} LIVE\n\n"
-                for ex, p in direct_prices.items():
-                    text += f"{ex}: ${p:.4f}\n"
-                
-                text += f"\nСпред {min_ex}-{max_ex}\n"
-                text += f"${min_p:.4f} → ${max_p:.4f}\n"
-                text += f"PnL: ${pnl:.2f}"
+                text += f"\n🎯 СПРЕД:\n"
+                text += f"🟢 {min_exchange}: ${min_price:.6f}\n"
+                text += f"🔴 {max_exchange}: ${max_price:.6f}\n"
+                text += f"📈 {spread_pct:.2f}% | 💵 ${pnl:.2f}"
                 
                 await app.bot.send_message(uid, text)
             
@@ -165,11 +171,11 @@ async def status_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     
     data = data_store[uid]
-    prices = get_direct_prices(data["symbol"])
+    prices = get_token_price(data["symbol"])
     
-    text = f"{data['symbol'].upper()} STATUS\n\n"
+    text = f"📋 {data['symbol']} STATUS\n\n"
     for ex, p in prices.items():
-        text += f"{ex}: ${p:.4f}\n"
+        text += f"{ex:<10}: ${p:.6f}\n"
     
     await update.message.reply_text(text)
 
@@ -178,7 +184,7 @@ async def stop_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if uid in tasks_store:
         tasks_store[uid].cancel()
         tasks_store.pop(uid, None)
-        await update.message.reply_text("Зупинено")
+        await update.message.reply_text("🛑 ЗУПИНЕНО")
     else:
         await update.message.reply_text("Не запущено")
 
