@@ -1,11 +1,8 @@
 import os
 import asyncio
-import logging
 import requests
 from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, ContextTypes, ConversationHandler, filters
-
-logging.basicConfig(level=logging.INFO)
 
 INTERVAL = 0
 
@@ -13,45 +10,57 @@ data_store = {}
 tasks_store = {}
 
 def get_all_futures_prices(symbol):
-    """Ціни з ВСІХ бірж"""
+    """ПРАВИЛЬНІ ф'ючерсні API з документації"""
     symbol_usdt = f"{symbol.upper()}USDT"
     prices = {}
     
-    # BINANCE FUTURES
+    # ✅ BINANCE FUTURES (працює)
     try:
         r = requests.get(f"https://fapi.binance.com/fapi/v1/ticker/price?symbol={symbol_usdt}", timeout=3)
         prices["BINANCE"] = float(r.json()["price"])
     except:
         prices["BINANCE"] = None
     
-    # MEXC SPOT (стабільний)
+    # ✅ MEXC FUTURES (правильний ендпоінт з docs)
     try:
-        r = requests.get(f"https://api.mexc.com/api/v3/ticker/price?symbol={symbol_usdt}", timeout=3)
-        prices["MEXC"] = float(r.json()["price"])
+        r = requests.get("https://contract.mexc.com/api/v1/contract/ticker", params={"symbol": symbol_usdt}, timeout=3)
+        data = r.json()
+        if data.get("success") and data.get("data"):
+            prices["MEXC"] = float(data["data"][0]["lastPrice"])
     except:
         prices["MEXC"] = None
     
-    # BITGET SPOT
+    # ✅ BITGET FUTURES (з docs: /api/mix/v1/market/tickers)
     try:
-        r = requests.get(f"https://api.bitget.com/api/spot/v1/market/ticker?symbol={symbol_usdt}", timeout=3)
+        r = requests.get("https://api.bitget.com/api/mix/v1/market/tickers", params={"productType": "umcbl"}, timeout=3)
         data = r.json()
-        prices["BITGET"] = float(data["data"][0]["lastPr"]) if data.get("code") == "00000" else None
+        if data.get("code") == "00000" and data.get("data"):
+            for ticker in data["data"]:
+                if ticker["symbol"].endswith("_USDT_UMCBL"):
+                    base = ticker["symbol"].split("_")[0]
+                    if base == symbol.upper():
+                        prices["BITGET"] = float(ticker["lastPr"])
+                        break
     except:
         prices["BITGET"] = None
     
-    # GATE SPOT
+    # ✅ GATE FUTURES USDT (з docs: /futures/usdt/tickers)
     try:
-        r = requests.get(f"https://api.gateio.ws/api/v4/spot/tickers?currency_pair={symbol_usdt}", timeout=3)
+        r = requests.get("https://api.gateio.ws/api/v4/futures/usdt/tickers", timeout=3)
         data = r.json()
-        prices["GATE"] = float(data[0]["last"]) if data else None
+        for ticker in 
+            if ticker["contract"] == symbol_usdt:
+                prices["GATE"] = float(ticker["last"])
+                break
     except:
         prices["GATE"] = None
     
-    # BINGX SPOT
+    # ✅ BINGX FUTURES (з docs: swap/v2/ticker)
     try:
-        r = requests.get(f"https://open-api.bingx.com/openApi/spot/v1/market/ticker?symbol={symbol_usdt}", timeout=3)
+        r = requests.get("https://open-api.bingx.com/openApi/swap/v2/ticker", params={"symbol": symbol_usdt}, timeout=3)
         data = r.json()
-        prices["BINGX"] = float(data["data"][0]["lastPr"]) if data.get("code") == 0 else None
+        if data.get("code") == 0 and data.get("data"):
+            prices["BINGX"] = float(data["data"][0]["lastPr"])
     except:
         prices["BINGX"] = None
     
@@ -73,32 +82,32 @@ async def handle_prices(update: Update, context: ContextTypes.DEFAULT_TYPE):
         valid_prices = {k: v for k, v in prices.items() if v is not None}
         
         if not valid_prices:
-            await update.message.reply_text(f"❌ {symbol} немає цін")
+            await update.message.reply_text(f"❌ {symbol} немає на біржах")
             return ConversationHandler.END
         
+        # Знаходимо найкращий спред
         min_price = min(valid_prices.values())
         max_price = max(valid_prices.values())
         min_exchange = next(k for k, v in valid_prices.items() if v == min_price)
         max_exchange = next(k for k, v in valid_prices.items() if v == max_price)
         
-        current_spread = (max_price - min_price) / min_price * 100
+        current_spread_pct = (max_price - min_price) / min_price * 100
         current_pnl = amount * (max_price - min_price)
         
-        text = f"🔥 {symbol} СПРЕД\n\n"
-        text += f"📈 Вхід: ${entry_price1} → ${entry_price2}\n"
-        text += f"💰 {amount} шт\n\n"
-        
+        text = f"🔥 {symbol} Ф'ЮЧЕРСИ | {amount} шт\n\n"
+        text += f"Вхід: ${entry_price1:,.0f} → ${entry_price2:,.0f}\n\n"
         text += "💹 ЦІНИ:\n"
+        
         for exch, price in prices.items():
             status = f"${price:,.0f}" if price else "❌"
             text += f"{exch:<8}: {status}\n"
         
-        text += f"\n🎯 НАЙКРАЩЕ:\n"
-        text += f"КУПИТИ {min_exchange}:  ${min_price:,.0f}\n"
-        text += f"ПРОДАТИ {max_exchange}: ${max_price:,.0f}\n"
-        text += f"📊 СПРЕД: {current_spread:.2f}%\n"
+        text += f"\n🎯 НАЙКРАЩИЙ СПРЕД:\n"
+        text += f"🟢 Купити {min_exchange}: ${min_price:,.0f}\n"
+        text += f"🔴 Продати {max_exchange}: ${max_price:,.0f}\n"
+        text += f"📊 Спред: {current_spread_pct:.2f}%\n"
         text += f"💵 PnL: ${current_pnl:,.2f}\n\n"
-        text += "⏰ Хвилини (1-60):"
+        text += "⏰ Моніторинг (хвилин):"
         
         context.user_data.update({
             "entry1": entry_price1, "entry2": entry_price2, 
@@ -108,20 +117,23 @@ async def handle_prices(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(text)
         return INTERVAL
         
-    except:
-        await update.message.reply_text("87000 87200 0.1 BTC")
+    except Exception as e:
+        await update.message.reply_text(f"Помилка: {e}\n87000 87200 0.1 BTC")
         return ConversationHandler.END
 
 async def set_interval(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         mins = int(update.message.text)
+        if mins < 1 or mins > 60:
+            await update.message.reply_text("1-60 хвилин!")
+            return INTERVAL
+            
         uid = update.effective_user.id
         data = context.user_data.copy()
         data["sec"] = mins * 60
         
         data_store[uid] = data
         
-        # Зупиняємо попередню задачу
         if uid in tasks_store:
             tasks_store[uid].cancel()
         
@@ -130,17 +142,20 @@ async def set_interval(update: Update, context: ContextTypes.DEFAULT_TYPE):
         tasks_store[uid] = task
         
         await update.message.reply_text(
-            f"🚀 СПРЕД МОНИТОРИНГ!\n\n"
+            f"🚀 МОНІТОРИНГ СПРЕДУ!\n\n"
             f"🪙 {data['sym']} | {mins} хв\n"
             f"/status /stop /test {data['sym']}"
         )
         return ConversationHandler.END
     except:
-        await update.message.reply_text("1-60")
+        await update.message.reply_text("Введи 1-60")
         return INTERVAL
 
 async def run_monitor(uid, app):
-    data = data_store[uid]
+    data = data_store.get(uid)
+    if not 
+        return
+        
     while uid in tasks_store:
         try:
             prices = get_all_futures_prices(data["sym"])
@@ -152,7 +167,7 @@ async def run_monitor(uid, app):
                 min_exchange = next(k for k, v in valid_prices.items() if v == min_price)
                 max_exchange = next(k for k, v in valid_prices.items() if v == max_price)
                 
-                current_pnl = data["amt"] * (max_price - min_price)
+                pnl = data["amt"] * (max_price - min_price)
                 
                 text = f"🔥 {data['sym']} LIVE СПРЕД\n\n"
                 for exch, price in prices.items():
@@ -160,11 +175,13 @@ async def run_monitor(uid, app):
                     text += f"{exch:<8}: {status}\n"
                 
                 text += f"\n🎯 СПРЕД:\n"
-                text += f"КУПИТИ {min_exchange}: ${min_price:,.0f}\n"
-                text += f"ПРОДАТИ {max_exchange}: ${max_price:,.0f}\n"
-                text += f"💵 PnL: ${current_pnl:,.2f}"
+                text += f"🟢 {min_exchange:<8}: ${min_price:,.0f}\n"
+                text += f"🔴 {max_exchange:<8}: ${max_price:,.0f}\n"
+                text += f"💵 PnL: ${pnl:,.2f}"
                 
                 await app.bot.send_message(uid, text)
+            else:
+                await app.bot.send_message(uid, f"❌ {data['sym']} мало бірж онлайн")
             
             await asyncio.sleep(data["sec"])
         except asyncio.CancelledError:
@@ -176,8 +193,7 @@ async def stop_monitor(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
     if uid in tasks_store:
         tasks_store[uid].cancel()
-        if uid in data_store:
-            del data_store[uid]
+        data_store.pop(uid, None)
         await update.message.reply_text("🛑 СПРЕД ЗУПИНЕНО")
     else:
         await update.message.reply_text("Нічого не запущено")
@@ -185,13 +201,13 @@ async def stop_monitor(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def show_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
     if uid not in data_store:
-        await update.message.reply_text("Нічого не запущено")
+        await update.message.reply_text("Нічого не моніториться")
         return
     
     data = data_store[uid]
     prices = get_all_futures_prices(data["sym"])
     
-    text = f"📋 {data['sym']} STATUS\n\n"
+    text = f"📋 {data['sym']} СПРЕД STATUS\n\n"
     for exch, price in prices.items():
         status = f"${price:,.0f}" if price else "❌"
         text += f"{exch:<8}: {status}\n"
@@ -201,11 +217,11 @@ async def show_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
         min_price = min(valid_prices.values())
         max_price = max(valid_prices.values())
         pnl = data["amt"] * (max_price - min_price)
-        text += f"\n💵 Поточний PnL: ${pnl:,.2f}"
+        text += f"\n💵 PnL: ${pnl:,.2f}"
     
     await update.message.reply_text(text)
 
-async def test_prices(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def test_all(update: Update, context: ContextTypes.DEFAULT_TYPE):
     symbol = (context.args[0] if context.args else "BTC").upper()
     prices = get_all_futures_prices(symbol)
     
@@ -221,10 +237,6 @@ async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return ConversationHandler.END
 
 if __name__ == "__main__":
-    # Захист від подвійного запуску
-    if os.getenv("DYNO"):
-        print("🚀 Railway Production Bot")
-    
     app = ApplicationBuilder().token(os.getenv("BOT_TOKEN")).build()
     
     conv = ConversationHandler(
@@ -236,9 +248,9 @@ if __name__ == "__main__":
     )
     
     app.add_handler(conv)
-    app.add_handler(CommandHandler("test", test_prices))
+    app.add_handler(CommandHandler("test", test_all))
     app.add_handler(CommandHandler("stop", stop_monitor))
     app.add_handler(CommandHandler("status", show_status))
     
-    print("🚀 СПРЕД Бот запущено!")
-    app.run_polling(drop_pending_updates=True)  # 🔧 РІЗИК Конфліктів!
+    print("🚀 Ф'ючерсний Спред Бот v3.0!")
+    app.run_polling(drop_pending_updates=True)
