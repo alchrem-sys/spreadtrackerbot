@@ -9,48 +9,89 @@ PRICE1, EXCHANGE1, EXCHANGE2, INTERVAL = range(4)
 data_store = {}
 tasks_store = {}
 
+def test_all_prices(symbol):
+    """Тестує всі біржі одразу"""
+    results = {}
+    symbol_usdt = f"{symbol.upper()}USDT"
+    
+    try:
+        # MEXC
+        r = requests.get("https://api.mexc.com/api/v3/ticker/price", params={"symbol": symbol_usdt}, timeout=3)
+        results["mexc"] = r.json().get("price", "ERROR")
+    except:
+        results["mexc"] = "FAIL"
+    
+    try:
+        # Binance
+        r = requests.get("https://api.binance.com/api/v3/ticker/price", params={"symbol": symbol_usdt}, timeout=3)
+        results["binance"] = r.json().get("price", "ERROR")
+    except:
+        results["binance"] = "FAIL"
+    
+    return results
+
 def get_price(exchange, symbol):
+    symbol_usdt = f"{symbol.upper()}USDT"
     try:
         if exchange == "mexc":
-            r = requests.get("https://api.mexc.com/api/v3/ticker/price", params={"symbol": f"{symbol}USDT"})
-            return float(r.json()["price"])
+            r = requests.get("https://api.mexc.com/api/v3/ticker/price", params={"symbol": symbol_usdt}, timeout=5)
+            data = r.json()
+            return float(data["price"]) if "price" in data else None
         elif exchange == "binance":
-            r = requests.get("https://api.binance.com/api/v3/ticker/price", params={"symbol": f"{symbol}USDT"})
-            return float(r.json()["price"])
+            r = requests.get("https://api.binance.com/api/v3/ticker/price", params={"symbol": symbol_usdt}, timeout=5)
+            data = r.json()
+            return float(data["price"]) if "price" in data else None
     except:
         return None
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("ціна1 ціна2 токени символ\nПриклад: 0.54 0.58 1000 sol")
+    await update.message.reply_text("📊 Спред бот\n\n/test BTC - перевірити API\nабо\nціна1 ціна2 токени символ")
     return PRICE1
+
+async def test_api(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Команда /test для діагностики"""
+    if context.args:
+        symbol = context.args[0].upper()
+        results = test_all_prices(symbol)
+        text = f"🧪 Тест {symbol}:\n\n"
+        for exch, price in results.items():
+            text += f"{exch}: {price}\n"
+        await update.message.reply_text(text)
+    else:
+        await update.message.reply_text("Використай /test BTC")
 
 async def prices(update: Update, context: ContextTypes.DEFAULT_TYPE):
     parts = update.message.text.split()
     if len(parts) < 4: 
-        await update.message.reply_text("0.54 0.58 1000 sol")
+        await update.message.reply_text("Формат: 60000 60200 0.1 BTC\nСпочатку перевір /test BTC")
         return PRICE1
     
     try:
         price1 = float(parts[0])
         price2 = float(parts[1])
         amount = float(parts[2])
-        symbol = parts[3]
+        symbol = parts[3].upper()
         
-        # ВИПРАВЛЕНО: використовуємо context.user_data.clear() + update()
         context.user_data.clear()
         context.user_data.update({
             "p1": price1, "p2": price2, "amt": amount, "sym": symbol
         })
         
-        await update.message.reply_text("Біржа1 (mexc/binance):")
+        # Тестуємо API одразу
+        test_results = test_all_prices(symbol)
+        test_text = "📊 API тест:\n" + "\n".join([f"{k}: {v}" for k,v in test_results.items()])
+        
+        await update.message.reply_text(
+            f"✅ {symbol}\nТокенів: {amount}\n\n{test_text}\n\nБіржа1 (mexc/binance):"
+        )
         return EXCHANGE1
     except:
-        await update.message.reply_text("Неправильно!")
+        await update.message.reply_text("Помилка! Приклад: 60000 60200 0.1 BTC")
         return PRICE1
 
 async def exch1(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data["ex1"] = update.message.text.strip().lower()
-    await update.message.reply_text("Біржа2:")
+    await update.message.reply_text("Біржа2 (mexc/binance):")
     return EXCHANGE2
 
 async def exch2(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -74,7 +115,7 @@ async def interval(update: Update, context: ContextTypes.DEFAULT_TYPE):
         task = asyncio.create_task(run_monitor(uid, app))
         tasks_store[uid] = task
         
-        await update.message.reply_text(f"Запущено! {mins} хв\n/status /stop")
+        await update.message.reply_text(f"🚀 Запущено! {mins} хв\n/status /stop")
         return ConversationHandler.END
     except:
         await update.message.reply_text("Число 1-60!")
@@ -89,8 +130,10 @@ async def run_monitor(uid, app):
             
             if p1 and p2:
                 pnl = data["amt"] * (p2 - p1)
-                text = f"{data['sym'].upper()}\n{data['ex1']}: ${p1:.6f}\n{data['ex2']}: ${p2:.6f}\nPnL: ${pnl:+.2f}"
+                text = f"📊 {data['sym']}\n{data['ex1'].upper()}: ${p1:.4f}\n{data['ex2'].upper()}: ${p2:.4f}\n💵 PnL: ${pnl:+.2f}"
                 await app.bot.send_message(uid, text)
+            else:
+                await app.bot.send_message(uid, f"❌ {data['sym']} немає ціни")
             
             await asyncio.sleep(data["sec"])
         except:
@@ -100,8 +143,7 @@ async def stop(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
     if uid in tasks_store:
         tasks_store[uid].cancel()
-        if uid in data_store:
-            del data_store[uid]
+        data_store.pop(uid, None)
         await update.message.reply_text("🛑 Зупинено")
     else:
         await update.message.reply_text("Не запущено")
@@ -119,13 +161,13 @@ async def status(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if p1 and p2:
         pnl = data["amt"] * (p2 - p1)
         await update.message.reply_text(
-            f"{data['sym'].upper()}\n"
-            f"{data['ex1']}: ${p1:.6f}\n"
-            f"{data['ex2']}: ${p2:.6f}\n"
-            f"PnL: ${pnl:+.2f}"
+            f"📋 {data['sym']}\n"
+            f"{data['ex1'].upper()}: ${p1:.4f}\n"
+            f"{data['ex2'].upper()}: ${p2:.4f}\n"
+            f"💵 PnL: ${pnl:+.2f}"
         )
     else:
-        await update.message.reply_text("Ціни немає")
+        await update.message.reply_text("❌ Ціни немає")
 
 async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("Скасовано")
@@ -146,8 +188,9 @@ if __name__ == "__main__":
     )
     
     app.add_handler(conv)
+    app.add_handler(CommandHandler("test", test_api))
     app.add_handler(CommandHandler("stop", stop))
     app.add_handler(CommandHandler("status", status))
     
-    print("🚀 Бот запущено!")
+    print("🚀 Бот з тестом запущено!")
     app.run_polling()
