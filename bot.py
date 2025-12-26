@@ -10,24 +10,24 @@ data_store = {}
 tasks_store = {}
 
 def get_prices(symbol):
-    symbol_usdt = f"{symbol.upper()}USDT"
     prices = {}
+    symbol_usdt = f"{symbol.upper()}USDT"
     
+    r = requests.get(f"https://fapi.binance.com/fapi/v1/ticker/price?symbol={symbol_usdt}", timeout=3)
     try:
-        r = requests.get(f"https://fapi.binance.com/fapi/v1/ticker/price?symbol={symbol_usdt}", timeout=3)
         prices["BINANCE"] = float(r.json()["price"])
     except:
         pass
     
+    r = requests.get(f"https://api.mexc.com/api/v3/ticker/price?symbol={symbol_usdt}", timeout=3)
     try:
-        r = requests.get(f"https://api.mexc.com/api/v3/ticker/price?symbol={symbol_usdt}", timeout=3)
         prices["MEXC"] = float(r.json()["price"])
     except:
         pass
     
     return prices
 
-async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def start_monitor(update: Update, context: ContextTypes.DEFAULT_TYPE):
     parts = update.message.text.split()
     if len(parts) < 4:
         await update.message.reply_text("87000 87200 0.1 BTC")
@@ -40,30 +40,30 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         symbol = parts[3].upper()
         
         prices = get_prices(symbol)
-        valid_prices = {k: v for k, v in prices.items() if v is not None}
         
-        if len(valid_prices) < 2:
-            await update.message.reply_text(f"{symbol} мало цін")
-            return ConversationHandler.END
-        
-        min_price = min(valid_prices.values())
-        max_price = max(valid_prices.values())
-        min_ex = [k for k, v in valid_prices.items() if v == min_price][0]
-        max_ex = [k for k, v in valid_prices.items() if v == max_price][0]
-        
-        spread = (max_price - min_price) / min_price * 100
-        pnl = amount * (max_price - min_price)
-        
-        text = f"{symbol} СПРЕД\n\n"
+        text = f"{symbol}\n\n"
         text += f"Вхід: ${entry1} → ${entry2}\n"
         text += f"{amount} шт\n\n"
         
-        for ex, p in prices.items():
-            status = f"${p}" if p else "❌"
-            text += f"{ex}: {status}\n"
+        min_p = 999999
+        max_p = 0
+        min_ex = ""
+        max_ex = ""
         
-        text += f"\nСпред {min_ex}-{max_ex}: {spread:.2f}%\n"
-        text += f"PnL: ${pnl}\n\nХвилини:"
+        for ex, p in prices.items():
+            text += f"{ex}: ${p}\n"
+            if p < min_p:
+                min_p = p
+                min_ex = ex
+            if p > max_p:
+                max_p = p
+                max_ex = ex
+        
+        spread = (max_p - min_p) / min_p * 100
+        pnl = amount * (max_p - min_p)
+        
+        text += f"\nСпред {min_ex}-{max_ex}: {spread:.2f}%"
+        text += f"\nPnL: ${pnl:.2f}\n\nХвилини:"
         
         context.user_data["entry1"] = entry1
         context.user_data["entry2"] = entry2
@@ -77,58 +77,55 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("87000 87200 0.1 BTC")
         return ConversationHandler.END
 
-async def set_time(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    try:
-        mins = int(update.message.text)
-        uid = update.effective_user.id
-        data = context.user_data.copy()
-        data["time"] = mins * 60
-        
-        data_store[uid] = data
-        
-        if uid in tasks_store:
-            tasks_store[uid].cancel()
-        
-        app = context.application
-        task = asyncio.create_task(run_check(uid, app))
-        tasks_store[uid] = task
-        
-        await update.message.reply_text(f"{data['symbol']} {mins}хв запущено!")
-        return ConversationHandler.END
-    except:
-        await update.message.reply_text("1-60")
-        return INTERVAL
+async def set_interval(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    mins = int(update.message.text)
+    uid = update.effective_user.id
+    data = context.user_data.copy()
+    data["interval"] = mins * 60
+    
+    data_store[uid] = data
+    
+    if uid in tasks_store:
+        tasks_store[uid].cancel()
+    
+    app = context.application
+    task = asyncio.create_task(run_monitor(uid, app))
+    tasks_store[uid] = task
+    
+    await update.message.reply_text(f"{data['symbol']} {mins}хв запущено!")
+    return ConversationHandler.END
 
-async def run_check(uid, app):
+async def run_monitor(uid, app):
     data = data_store.get(uid)
     while uid in tasks_store:
         try:
             prices = get_prices(data["symbol"])
-            valid_prices = {k: v for k, v in prices.items() if v is not None}
             
-            if len(valid_prices) >= 2:
-                min_p = min(valid_prices.values())
-                max_p = max(valid_prices.values())
-                min_ex = [k for k, v in valid_prices.items() if v == min_p][0]
-                max_ex = [k for k, v in valid_prices.items() if v == max_p][0]
-                
-                pnl = data["amount"] * (max_p - min_p)
-                
-                text = f"{data['symbol']} LIVE\n\n"
-                for ex, p in prices.items():
-                    status = f"${p}" if p else "❌"
-                    text += f"{ex}: {status}\n"
-                
-                text += f"\nСпред {min_ex}-{max_ex}: ${max_p-min_p}"
-                text += f"\nPnL: ${pnl}"
-                
-                await app.bot.send_message(uid, text)
+            text = f"{data['symbol']} LIVE\n\n"
+            min_p = 999999
+            max_p = 0
+            min_ex = ""
+            max_ex = ""
             
-            await asyncio.sleep(data["time"])
+            for ex, p in prices.items():
+                text += f"{ex}: ${p}\n"
+                if p < min_p:
+                    min_p = p
+                    min_ex = ex
+                if p > max_p:
+                    max_p = p
+                    max_ex = ex
+            
+            pnl = data["amount"] * (max_p - min_p)
+            text += f"\nСпред {min_ex}-{max_ex}: ${max_p-min_p}"
+            text += f"\nPnL: ${pnl:.2f}"
+            
+            await app.bot.send_message(uid, text)
+            await asyncio.sleep(data["interval"])
         except:
             await asyncio.sleep(60)
 
-async def stop_bot(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def stop_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
     if uid in tasks_store:
         tasks_store[uid].cancel()
@@ -137,7 +134,7 @@ async def stop_bot(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         await update.message.reply_text("Не запущено")
 
-async def show_info(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def status_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
     if uid not in data_store:
         await update.message.reply_text("Нічого немає")
@@ -146,14 +143,13 @@ async def show_info(update: Update, context: ContextTypes.DEFAULT_TYPE):
     data = data_store[uid]
     prices = get_prices(data["symbol"])
     
-    text = f"{data['symbol']} INFO\n\n"
+    text = f"{data['symbol']} STATUS\n\n"
     for ex, p in prices.items():
-        status = f"${p}" if p else "❌"
-        text += f"{ex}: {status}\n"
+        text += f"{ex}: ${p}\n"
     
     await update.message.reply_text(text)
 
-async def test_api(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def test_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     symbol = "BTC"
     if context.args:
         symbol = context.args[0].upper()
@@ -161,8 +157,7 @@ async def test_api(update: Update, context: ContextTypes.DEFAULT_TYPE):
     prices = get_prices(symbol)
     text = f"ТЕСТ {symbol}:\n\n"
     for ex, p in prices.items():
-        status = f"${p}" if p else "❌"
-        text += f"{ex}: {status}\n"
+        text += f"{ex}: ${p}\n"
     
     await update.message.reply_text(text)
 
@@ -170,8 +165,18 @@ async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("Скасовано")
     return ConversationHandler.END
 
-if __name__ == "__main__":
-    app = ApplicationBuilder().token(os.getenv("BOT_TOKEN")).build()
-    
-    conv = ConversationHandler(
-        entry_points=[MessageHandler(filters.TEXT
+app = ApplicationBuilder().token(os.getenv("BOT_TOKEN")).build()
+
+conv = ConversationHandler(
+    entry_points=[MessageHandler(filters.TEXT & ~filters.COMMAND, start_monitor)],
+    states={INTERVAL: [MessageHandler(filters.TEXT & ~filters.COMMAND, set_interval)]},
+    fallbacks=[CommandHandler("cancel", cancel)]
+)
+
+app.add_handler(conv)
+app.add_handler(CommandHandler("stop", stop_command))
+app.add_handler(CommandHandler("status", status_command))
+app.add_handler(CommandHandler("test", test_command))
+
+print("Спред бот запущено!")
+app.run_polling(drop_pending_updates=True)
