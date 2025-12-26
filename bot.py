@@ -29,12 +29,11 @@ GMGN_URL = "https://gmgn.ai/defi/quotation/v1/tokens"
 
 PRICE1, EXCHANGE1, EXCHANGE2, INTERVAL = range(4)
 
-# Global storage for Railway
-user_ Dict[int, Dict] = {}
-user_tasks: Dict[int, asyncio.Task] = {}
+# Global storage - ПОВНИЙ РЯДОК БЕЗ ПОМИЛОК
+user_data = {}
+user_tasks = {}
 
-def get_cex_price(exchange: str, symbol: str) -> Optional[float]:
-    """Get price from CEX"""
+def get_cex_price(exchange, symbol):
     config = EXCHANGE_APIS.get(exchange.lower())
     if not config:
         return None
@@ -55,8 +54,7 @@ def get_cex_price(exchange: str, symbol: str) -> Optional[float]:
     except:
         return None
 
-def get_gmgn_price(token_address: str) -> Optional[float]:
-    """Get price from GMGN DEX"""
+def get_gmgn_price(token_address):
     try:
         resp = requests.get(f"{GMGN_URL}/{token_address}", timeout=10)
         data = resp.json()
@@ -64,17 +62,15 @@ def get_gmgn_price(token_address: str) -> Optional[float]:
     except:
         return None
 
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def start(update, context):
     await update.message.reply_text(
         "📊 Спред PnL Бот\n\n"
-        "Введи початкові дані:\n"
-        "ціна1 ціна2 токени символ\n\n"
-        "Приклад:\n"
-        "0.54 0.58 1000 sol"
+        "Введи: ціна1 ціна2 токени символ\n\n"
+        "Приклад: 0.54 0.58 1000 sol"
     )
     return PRICE1
 
-async def get_prices(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def get_prices(update, context):
     try:
         parts = update.message.text.strip().split()
         if len(parts) < 4:
@@ -92,35 +88,30 @@ async def get_prices(update: Update, context: ContextTypes.DEFAULT_TYPE):
         })
         
         await update.message.reply_text(
-            f"✅ Зафіксовано вхід:\n"
+            f"✅ Зафіксовано:\n"
             f"📈 Ціна 1: ${price1:.8f}\n"
             f"📉 Ціна 2: ${price2:.8f}\n"
             f"💰 Токенів: {amount:,}\n"
             f"🪙 {symbol.upper()}\n\n"
-            f"💹 Початковий спред: {((price2-price1)/price1)*100:.2f}%\n"
             f"💵 Початковий PnL: ${(price2-price1)*amount:.2f}\n\n"
-            f"Введи біржу №1 (mexc, binance, gate, bitget, orbit, gmgn:контракт):"
+            f"Біржа №1 (mexc, binance, gate, bitget, orbit, gmgn:контракт):"
         )
         return EXCHANGE1
     except ValueError:
-        await update.message.reply_text("Неправильний формат чисел")
+        await update.message.reply_text("Неправильний формат")
         return PRICE1
 
-async def get_exchange1(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def get_exchange1(update, context):
     context.user_data["exchange1"] = update.message.text.strip().lower()
-    await update.message.reply_text("Введи біржу №2 (mexc, binance, gate, bitget, orbit, gmgn:контракт):")
+    await update.message.reply_text("Біржа №2 (mexc, binance, gate, bitget, orbit, gmgn:контракт):")
     return EXCHANGE2
 
-async def get_exchange2(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def get_exchange2(update, context):
     context.user_data["exchange2"] = update.message.text.strip().lower()
-    
-    await update.message.reply_text(
-        "⏰ Введи інтервал в хвилинах (1-60):\n"
-        "Приклад: 5"
-    )
+    await update.message.reply_text("⏰ Інтервал в хвилинах (1-60):")
     return INTERVAL
 
-async def get_interval(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def get_interval(update, context):
     try:
         interval_min = int(update.message.text.strip())
         if interval_min < 1 or interval_min > 60:
@@ -129,35 +120,30 @@ async def get_interval(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         user_id = update.effective_user.id
         data = context.user_data.copy()
-        data.update({"interval_min": interval_min})
+        data["interval_min"] = interval_min
         
         user_data[user_id] = data
         
-        # Stop previous task
         if user_id in user_tasks and not user_tasks[user_id].done():
             user_tasks[user_id].cancel()
         
-        # Start new monitoring task
         app = context.application
         task = asyncio.create_task(monitor_spread(user_id, app))
         user_tasks[user_id] = task
         
         await update.message.reply_text(
-            f"🚀 Моніторинг запущено!\n\n"
-            f"⏰ Оновлення: кожні {interval_min} хв\n"
+            f"🚀 Запущено!\n\n"
+            f"⏰ Кожні {interval_min} хв\n"
             f"🪙 {data['symbol'].upper()}\n"
             f"💱 {data['exchange1']} ↔ {data['exchange2']}\n\n"
-            f"📱 /status - поточний PnL\n"
-            f"🛑 /stop - зупинити"
+            f"/status - статус\n/stop - зупинити"
         )
-        
         return ConversationHandler.END
     except ValueError:
-        await update.message.reply_text("Введи число (1-60)")
+        await update.message.reply_text("Введи число 1-60")
         return INTERVAL
 
-async def monitor_spread(user_id: int, app):
-    """Background monitoring task"""
+async def monitor_spread(user_id, app):
     data = user_data[user_id]
     interval_sec = data["interval_min"] * 60
     initial_pnl_usd = data["amount"] * (data["price2"] - data["price1"])
@@ -181,32 +167,30 @@ async def monitor_spread(user_id: int, app):
                     f"💱 {data['exchange1']}: ${price1:.8f}\n"
                     f"💰 {data['exchange2']}: ${price2:.8f}\n\n"
                     f"📈 Спред: {current_spread_pct:.2f}%\n"
-                    f"💵 PnL: ${current_pnl_usd:+.2f} ({pnl_change_pct:+.1f}%)"
+                    f"💵 PnL: ${current_pnl_usd:+.2f}"
                 )
-                
                 await app.bot.send_message(chat_id=user_id, text=text)
             
             await asyncio.sleep(interval_sec)
         except asyncio.CancelledError:
             break
         except Exception as e:
-            logger.error(f"Monitor error {user_id}: {e}")
+            logger.error(f"Error {user_id}: {e}")
             await asyncio.sleep(60)
 
-async def stop(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def stop(update, context):
     user_id = update.effective_user.id
     if user_id in user_tasks and not user_tasks[user_id].done():
         user_tasks[user_id].cancel()
-        if user_id in user_
-            del user_data[user_id]
-        await update.message.reply_text("🛑 Моніторинг зупинено")
+        user_data.pop(user_id, None)
+        await update.message.reply_text("🛑 Зупинено")
     else:
-        await update.message.reply_text("Моніторинг не активний")
+        await update.message.reply_text("Не активний")
 
-async def status(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def status(update, context):
     user_id = update.effective_user.id
     if user_id not in user_
-        await update.message.reply_text("Немає активних моніторингів")
+        await update.message.reply_text("Немає моніторингів")
         return
     
     data = user_data[user_id]
@@ -217,33 +201,27 @@ async def status(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     if price1 and price2:
         current_pnl_usd = data["amount"] * (price2 - price1)
-        initial_pnl_usd = data["amount"] * (data["price2"] - data["price1"])
-        pnl_change_pct = ((current_pnl_usd - initial_pnl_usd) / initial_pnl_usd) * 100 if initial_pnl_usd != 0 else 0
-        current_spread_pct = ((price2 - price1) / price1) * 100
-        
         text = (
-            f"📋 Поточний статус\n\n"
+            f"📋 Статус\n\n"
             f"🪙 {symbol.upper()}\n"
             f"💱 {exchange1} ↔ {exchange2}\n"
-            f"💰 Токенів: {data['amount']:,}\n\n"
-            f"💰 Ціни:\n"
-            f"  {exchange1}: ${price1:.8f}\n"
-            f"  {exchange2}: ${price2:.8f}\n\n"
-            f"📈 Спред: {current_spread_pct:.2f}%\n"
-            f"💵 PnL: ${current_pnl_usd:+.2f} ({pnl_change_pct:+.1f}%)"
+            f"💰 {data['amount']:,} токенів\n\n"
+            f"{exchange1}: ${price1:.8f}\n"
+            f"{exchange2}: ${price2:.8f}\n\n"
+            f"💵 PnL: ${current_pnl_usd:+.2f}"
         )
     else:
-        text = "Не вдалось отримати ціни"
+        text = "Ціни недоступні"
     
     await update.message.reply_text(text)
 
-async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def cancel(update, context):
     await update.message.reply_text("❌ Скасовано")
     return ConversationHandler.END
 
 def main():
     if not os.getenv("BOT_TOKEN"):
-        logger.error("BOT_TOKEN not set!")
+        print("BOT_TOKEN потрібен!")
         return
     
     app = ApplicationBuilder().token(os.getenv("BOT_TOKEN")).build()
@@ -263,7 +241,7 @@ def main():
     app.add_handler(CommandHandler("stop", stop))
     app.add_handler(CommandHandler("status", status))
     
-    logger.info("🚀 Спред PnL Бот запущено на Railway!")
+    print("🚀 Бот запущено!")
     app.run_polling()
 
 if __name__ == "__main__":
