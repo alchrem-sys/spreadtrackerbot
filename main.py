@@ -1,11 +1,10 @@
 import os
 import asyncio
-import json
-import logging
 import requests
-from telegram.ext import ApplicationBuilder, CommandHandler
+import json
+from telegram.ext import Application, CommandHandler
 from telegram import Update
-from telegram.constants
+
 
 
 logging.basicConfig(level=logging.INFO)
