@@ -7,7 +7,6 @@ from telegram.ext import (
     ApplicationBuilder, CommandHandler, ContextTypes, 
     MessageHandler, filters
 )
-from etherscan import Etherscan
 import requests
 
 logging.basicConfig(level=logging.INFO)
