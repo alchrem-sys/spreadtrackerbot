@@ -11,11 +11,10 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 TELEGRAM_TOKEN = os.getenv('TELEGRAM_TOKEN')
-ETHERSCAN_API_KEY = os.getenv('ETHERSCAN_API_KEY')  # etherscan.io/myapikey (працює для BSC як api.bscscan.com)
-PUSHOVER_USER_KEY = 'nhbdjue'  # Твій ключ
+ETHERSCAN_API_KEY = os.getenv('ETHERSCAN_API_KEY')  
+PUSHOVER_USER_KEY = 'nhbdjue'  
 PUSHOVER_API_URL = 'https://api.pushover.net/1/messages.json'
 
-# Стан: {chat_id: {'wallets': [], 'last_tx_hashes': set()}}
 user_data = {}
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -27,7 +26,9 @@ async def add_wallet(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text('Вкажи адресу: /add 0x...')
         return
     address = context.args[0].lower()
-    if 'user_data.setdefault(chat_id, {'wallets': [], 'last_tx_hashes': set()})['wallets'].append({'address': address, 'label': ' '.join(context.args[1:] or ['Wallet'])})
+    if chat_id not in user_
+        user_data[chat_id] = {'wallets': [], 'last_tx_hashes': set()}
+    user_data[chat_id]['wallets'].append({'address': address, 'label': ' '.join(context.args[1:] or ['Wallet'])})
     await update.message.reply_text(f'✅ Додано {address}')
 
 async def list_wallets(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -60,11 +61,11 @@ async def status(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 def send_pushover(title, message, tx_url):
     data = {
-        'token': 'a3’LSK9RR5K4J5QPE4PEQ',  # Free app token для test, заміни на свій з pushover.net/apps
+        'token': 'a3LSK9RR5K4J5QPE4PEQ',  
         'user': PUSHOVER_USER_KEY,
         'title': title,
         'message': f"{message}\nTX: {tx_url}\n/gm",
-        'priority': '2',  # Emergency: repeat + sound до ack
+        'priority': '2',  
         'retry': '30',
         'expire': '300',
         'sound': 'siren',
@@ -79,12 +80,11 @@ def check_sales(chat_id):
         return
     for wallet in data['wallets']:
         address = wallet['address']
-        # BSC/Eth API (заміни etherscan на bscscan для BSC)
         url = f"https://api.bscscan.com/api?module=account&action=tokentx&address={address}&startblock=0&endblock=99999999&sort=desc&apikey={ETHERSCAN_API_KEY}"
         resp = requests.get(url).json()
         if resp['status'] != '1':
             continue
-        txs = resp['result'][:5]  # Останні 5
+        txs = resp['result'][:5]  
         new_hashes = set()
         for tx in txs:
             if tx['from'].lower() == address.lower() and tx['hash'] not in data['last_tx_hashes']:
@@ -110,7 +110,7 @@ def main():
     app.add_handler(CommandHandler('remove', remove_wallet))
     app.add_handler(CommandHandler('status', status))
     app.add_handler(CommandHandler('monitor', monitor))
-    app.job_queue.run_repeating(periodic_monitor, interval=60)  # Кожну хвилину
+    app.job_queue.run_repeating(periodic_monitor, interval=60)  
     app.run_polling(drop_pending_updates=True)
 
 if __name__ == '__main__':
