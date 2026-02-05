@@ -3,7 +3,6 @@ from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters, ContextTypes
 
 # ----------------------------
-# Список дієслів: infinitiv, Präteritum, Partizip II, допоміжне
 verbs = [
     ["steigen", "stieg", "gestiegen", "sein"],
     ["werden", "wurde", "geworden", "sein"],
@@ -18,10 +17,8 @@ verbs = [
 ]
 # ----------------------------
 
-# Словник для прогресу кожного користувача
 user_data = {}
 
-# Беремо токен з environment variables
 TOKEN = os.environ.get("BOT_TOKEN")
 if not TOKEN:
     print("ERROR: Не знайдено BOT_TOKEN в environment variables!")
@@ -30,13 +27,11 @@ if not TOKEN:
 # ----------------------------
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
-    user_data[user_id] = {
-        "index": 0,      # поточне дієслово
-        "repeat": 0      # скільки разів треба повторити слово
-    }
+    user_data[user_id] = {"index": 0, "repeat": 0}
     await update.message.reply_text(
         "Привіт! Почнемо тренування.\n"
-        "Відповідай у форматі: Präteritum — Partizip II — допоміжне"
+        "Відповідай у форматі: Präteritum Partizip II допоміжне\n"
+        "Якщо випадково натиснув не ту клавішу, напиши `skip`, щоб пропустити повтори."
     )
     await ask_verb(update, context)
 
@@ -56,10 +51,18 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     repeat = user_data[user_id]["repeat"]
     correct = verbs[index % len(verbs)][1:]  # Präteritum, Partizip II, допоміжне
 
-    # прибираємо пробіли та приводимо до нижнього регістру
-    answer = update.message.text.strip().replace(" ", "").lower()
+    answer = update.message.text.strip().lower().replace(" ", "")
     correct_answer = "".join(correct).lower()
 
+    # Якщо користувач пише "skip", пропускаємо повтори
+    if answer == "skip" and repeat > 0:
+        user_data[user_id]["repeat"] = 0
+        await update.message.reply_text("🔹 Пропущено повтори, рухаємося далі.")
+        user_data[user_id]["index"] += 1
+        await ask_verb(update, context)
+        return
+
+    # Перевірка правильної відповіді
     if answer == correct_answer:
         if repeat > 0:
             user_data[user_id]["repeat"] -= 1
@@ -74,7 +77,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         user_data[user_id]["repeat"] = 5
         await update.message.reply_text(
-            f"❌ Неправильно. Тепер напиши правильну форму **5 разів**:\n"
+            f"❌ Неправильно. Тепер напиши правильну форму **5 разів** або введи `skip`:\n"
             f"{' — '.join(correct)}"
         )
 
