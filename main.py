@@ -1,119 +1,87 @@
 import os
-import asyncio
-import logging
-import requests
 from telegram import Update
-from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
+from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters, ContextTypes
 
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
+# ----------------------------
+# Список дієслів: infinitiv, Präteritum, Partizip II, допоміжне
+verbs = [
+    ["steigen", "stieg", "gestiegen", "sein"],
+    ["werden", "wurde", "geworden", "sein"],
+    ["beginnen", "begann", "begonnen", "haben"],
+    ["wissen", "wusste", "gewusst", "haben"],
+    ["essen", "ass", "gegessen", "haben"],
+    ["fahren", "fuhr", "gefahren", "sein"],
+    ["springen", "sprang", "gesprungen", "sein"],
+    ["rufen", "rief", "gerufen", "haben"],
+    ["leihen", "lieh", "geliehen", "haben"],
+    ["bleiben", "blieb", "geblieben", "sein"]
+]
+# ----------------------------
 
-TELEGRAM_TOKEN = os.getenv('TELEGRAM_TOKEN')
-ETHERSCAN_API_KEY = os.getenv('ETHERSCAN_API_KEY')
-PUSHOVER_TOKEN = os.getenv('PUSHOVER_TOKEN', 'arnj43aqr2twnobv1rnvikknvycrpd')
-PUSHOVER_USER_KEY = os.getenv('PUSHOVER_USER_KEY', 'u1z429dbeunegfhnkfhza9rimzo1ci')
-PUSHOVER_API_URL = 'https://api.pushover.net/1/messages.json'
-
+# Словник для прогресу кожного користувача
 user_data = {}
 
+# Беремо токен з environment variables
+TOKEN = os.environ.get("BOT_TOKEN")
+if not TOKEN:
+    print("ERROR: Не знайдено BOT_TOKEN в environment variables!")
+    exit(1)
+
+# ----------------------------
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text('🚀 Бот OK! /add 0x... /status')
-
-async def add_wallet(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    chat_id = update.effective_chat.id
-    if not context.args:
-        await update.message.reply_text('Використання: /add 0x123...')
-        return
-    address = context.args[0].lower()
-    if chat_id not in user_
-        user_data[chat_id] = {'wallets': [], 'last_tx_hashes': set()}
-    label = ' '.join(context.args[1:]) or 'Wallet'
-    user_data[chat_id]['wallets'].append({'address': address, 'label': label})
-    await update.message.reply_text(f'✅ Додано: {address} ({label})')
-
-async def list_wallets(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    chat_id = update.effective_chat.id
-    wallets = user_data.get(chat_id, {}).get('wallets', [])
-    if not wallets:
-        await update.message.reply_text('Немає гаманців. /add 0x...')
-        return
-    text = 'Гаманці:\n'
-    for i, w in enumerate(wallets):
-        text += f'{i}: {w["address"]} ({w["label"]})\n'
-    await update.message.reply_text(text)
-
-async def status(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    chat_id = update.effective_chat.id
-    data = user_data.get(chat_id, {})
-    count = len(data.get('wallets', []))
-    await update.message.reply_text(f'Гаманці: {count}. Моніторинг активний.')
-
-def send_pushover(title, message, tx_url):
-    payload = {
-        'token': PUSHOVER_TOKEN,
-        'user': PUSHOVER_USER_KEY,
-        'title': title,
-        'message': message + '\nTX: ' + tx_url + '\n/gm',
-        'priority': '2',
-        'retry': '30',
-        'expire': '300',
-        'sound': 'siren',
-        'html': '1'
+    user_id = update.effective_user.id
+    user_data[user_id] = {
+        "index": 0,      # поточне дієслово
+        "repeat": 0      # скільки разів треба повторити слово
     }
-    requests.post(PUSHOVER_API_URL, data=payload)
-    logger.info('🚨 Pushover надіслано')
+    await update.message.reply_text(
+        "Привіт! Почнемо тренування.\n"
+        "Відповідай у форматі: Präteritum — Partizip II — допоміжне"
+    )
+    await ask_verb(update, context)
 
-def check_sales(chat_id):
-    data = user_data.get(chat_id)
-    if not data or not data.get('wallets'):
+async def ask_verb(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    index = user_data[user_id]["index"]
+    verb = verbs[index % len(verbs)][0]
+    await update.message.reply_text(f"Дієслово: {verb}")
+
+async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    if user_id not in user_data:
+        await update.message.reply_text("Напиши /start, щоб почати тренування.")
         return
-    for wallet in data['wallets']:
-        address = wallet['address']
-        url = 'https://api.bscscan.com/api'
-        params = {
-            'module': 'account',
-            'action': 'tokentx',
-            'address': address,
-            'startblock': 0,
-            'endblock': 99999999,
-            'sort': 'desc',
-            'apikey': ETHERSCAN_API_KEY
-        }
-        try:
-            r = requests.get(url, params=params)
-            resp = r.json()
-            if resp['status'] == '1':
-                txs = resp['result'][:5]
-                for tx in txs:
-                    if (tx['from'].lower() == address.lower() and 
-                        tx['hash'] not in data['last_tx_hashes']):
-                        data['last_tx_hashes'].add(tx['hash'])
-                        tx_url = f'https://bscscan.com/tx/{tx["hash"]}'
-                        send_pushover(
-                            '🚨 ПРОДАЖ!', 
-                            f'{wallet["label"]}: {tx["tokenSymbol"]} {tx["value"]}',
-                            tx_url
-                        )
-        except Exception as e:
-            logger.error(f'BSCScan помилка: {e}')
 
-async def check_now(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    check_sales(update.effective_chat.id)
-    await update.message.reply_text('✅ Перевірено продажі')
+    index = user_data[user_id]["index"]
+    repeat = user_data[user_id]["repeat"]
+    correct = verbs[index % len(verbs)][1:]  # Präteritum, Partizip II, допоміжне
 
-async def periodic_check(context: ContextTypes.DEFAULT_TYPE):
-    for chat_id in list(user_data.keys()):
-        check_sales(chat_id)
+    # прибираємо пробіли та приводимо до нижнього регістру
+    answer = update.message.text.strip().replace(" ", "").lower()
+    correct_answer = "".join(correct).lower()
 
-def main():
-    app = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
-    app.add_handler(CommandHandler('start', start))
-    app.add_handler(CommandHandler('add', add_wallet))
-    app.add_handler(CommandHandler('list', list_wallets))
-    app.add_handler(CommandHandler('status', status))
-    app.add_handler(CommandHandler('check', check_now))
-    app.job_queue.run_repeating(periodic_check, interval=60, first=10)
-    app.run_polling(drop_pending_updates=True)
+    if answer == correct_answer:
+        if repeat > 0:
+            user_data[user_id]["repeat"] -= 1
+            await update.message.reply_text(
+                f"✅ Правильно! Повторіть ще {user_data[user_id]['repeat']} разів."
+            )
+        else:
+            await update.message.reply_text("✅ Абсолютно правильно!")
+            user_data[user_id]["index"] += 1
+            user_data[user_id]["repeat"] = 0
+            await ask_verb(update, context)
+    else:
+        user_data[user_id]["repeat"] = 5
+        await update.message.reply_text(
+            f"❌ Неправильно. Тепер напиши правильну форму **5 разів**:\n"
+            f"{' — '.join(correct)}"
+        )
 
-if __name__ == '__main__':
-    main()
+# ----------------------------
+app = ApplicationBuilder().token(TOKEN).build()
+app.add_handler(CommandHandler("start", start))
+app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+
+print("Бот запущено...")
+app.run_polling()
