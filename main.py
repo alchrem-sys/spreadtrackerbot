@@ -1,4 +1,5 @@
 import os
+import random
 from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters, ContextTypes
 
@@ -21,70 +22,87 @@ user_data = {}
 
 TOKEN = os.environ.get("BOT_TOKEN")
 if not TOKEN:
-    print("ERROR: Не знайдено BOT_TOKEN в environment variables!")
+    print("ERROR: BOT_TOKEN missing!")
     exit(1)
 
-# ----------------------------
+
+def new_round(user_id):
+    """Створюємо нове random коло слів"""
+    shuffled = verbs[:]
+    random.shuffle(shuffled)
+    user_data[user_id]["round"] = shuffled
+    user_data[user_id]["index"] = 0
+
+
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
-    user_data[user_id] = {"index": 0, "repeat": 0}
+    user_data[user_id] = {"repeat": 0}
+
+    new_round(user_id)
+
     await update.message.reply_text(
-        "Привіт! Почнемо тренування.\n"
-        "Відповідай у форматі: Präteritum Partizip II допоміжне\n"
-        "Якщо випадково натиснув не ту клавішу, напиши `skip`, щоб пропустити повтори."
+        "🚀 Починаємо тренування!\n"
+        "Формат: Präteritum — Partizip II — допоміжне\n"
+        "Якщо мисклік → напиши skip."
     )
+
     await ask_verb(update, context)
+
 
 async def ask_verb(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
-    index = user_data[user_id]["index"]
-    verb = verbs[index % len(verbs)][0]
-    await update.message.reply_text(f"Дієслово: {verb}")
+
+    # якщо всі слова пройшли → новий random круг
+    if user_data[user_id]["index"] >= len(user_data[user_id]["round"]):
+        new_round(user_id)
+        await update.message.reply_text("🔄 Нове коло слів!")
+
+    verb = user_data[user_id]["round"][user_data[user_id]["index"]][0]
+    await update.message.reply_text(f"👉 Дієслово: {verb}")
+
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
+
     if user_id not in user_data:
-        await update.message.reply_text("Напиши /start, щоб почати тренування.")
+        await update.message.reply_text("Напиши /start")
         return
 
-    index = user_data[user_id]["index"]
-    repeat = user_data[user_id]["repeat"]
-    correct = verbs[index % len(verbs)][1:]  # Präteritum, Partizip II, допоміжне
+    current = user_data[user_id]["round"][user_data[user_id]["index"]]
+    correct = current[1:]
 
-    answer = update.message.text.strip().lower().replace(" ", "")
+    answer = update.message.text.lower().replace(" ", "").strip()
     correct_answer = "".join(correct).lower()
 
-    # Якщо користувач пише "skip", пропускаємо повтори
-    if answer == "skip" and repeat > 0:
+    # skip повторів
+    if answer == "skip" and user_data[user_id]["repeat"] > 0:
         user_data[user_id]["repeat"] = 0
-        await update.message.reply_text("🔹 Пропущено повтори, рухаємося далі.")
         user_data[user_id]["index"] += 1
+        await update.message.reply_text("⏭ Пропущено.")
         await ask_verb(update, context)
         return
 
-    # Перевірка правильної відповіді
     if answer == correct_answer:
-        if repeat > 0:
+        if user_data[user_id]["repeat"] > 0:
             user_data[user_id]["repeat"] -= 1
             await update.message.reply_text(
-                f"✅ Правильно! Повторіть ще {user_data[user_id]['repeat']} разів."
+                f"✅ Добре. Ще {user_data[user_id]['repeat']} раз."
             )
         else:
-            await update.message.reply_text("✅ Абсолютно правильно!")
+            await update.message.reply_text("✅ Правильно!")
             user_data[user_id]["index"] += 1
-            user_data[user_id]["repeat"] = 0
             await ask_verb(update, context)
     else:
         user_data[user_id]["repeat"] = 5
         await update.message.reply_text(
-            f"❌ Неправильно. Тепер напиши правильну форму **5 разів** або введи `skip`:\n"
-            f"{' — '.join(correct)}"
+            "❌ Помилка.\n"
+            f"Напиши 5 разів або skip:\n{' — '.join(correct)}"
         )
 
-# ----------------------------
+
 app = ApplicationBuilder().token(TOKEN).build()
 app.add_handler(CommandHandler("start", start))
 app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
-print("Бот запущено...")
+print("Bot running...")
 app.run_polling()
