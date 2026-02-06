@@ -5,17 +5,31 @@ from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, fil
 
 # ----------------------------
 verbs = [
-    ["steigen", "stieg", "gestiegen", "sein"],
-    ["werden", "wurde", "geworden", "sein"],
     ["beginnen", "begann", "begonnen", "haben"],
-    ["wissen", "wusste", "gewusst", "haben"],
-    ["essen", "ass", "gegessen", "haben"],
-    ["fahren", "fuhr", "gefahren", "sein"],
-    ["springen", "sprang", "gesprungen", "sein"],
-    ["rufen", "rief", "gerufen", "haben"],
+    ["bitten", "bat", "gebeten", "haben"],
+    ["bleiben", "blieb", "geblieben", "sein"],
+    ["essen", "aß", "gegessen", "haben"],
+    ["fahren", "fuhr", "gefahren", "sein/haben"],
+    ["fallen", "fiel", "gefallen", "sein"],
+    ["finden", "fand", "gefunden", "haben"],
+    ["gehen", "ging", "gegangen", "sein"],
+    ["haben", "hatte", "gehabt", "haben"],
+    ["einladen", "lud ein", "eingeladen", "haben"],
     ["leihen", "lieh", "geliehen", "haben"],
-    ["bleiben", "blieb", "geblieben", "sein"]
+    ["rufen", "rief", "gerufen", "haben"],
+    ["schreiben", "schrieb", "geschrieben", "haben"],
+    ["sprechen", "sprach", "gesprochen", "haben"],
+    ["sehen", "sah", "gesehen", "haben"],
+    ["springen", "sprang", "gesprungen", "sein"],
+    ["sein", "war", "gewesen", "sein"],
+    ["stehen", "stand", "gestanden", "haben"],
+    ["steigen", "stieg", "gestiegen", "sein"],
+    ["trinken", "trank", "getrunken", "haben"],
+    ["werden", "wurde", "geworden", "sein"],
+    ["wissen", "wusste", "gewusst", "haben"],
+    ["ziehen", "zog", "gezogen", "sein/haben"]
 ]
+
 # ----------------------------
 
 user_data = {}
